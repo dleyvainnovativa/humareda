@@ -1,7 +1,7 @@
 <?php
 
 use App\Http\Controllers\Auth\FirebaseLoginController;
-use App\Http\Controllers\ConversationLogController;
+use App\Http\Controllers\ConversationController;
 use App\Http\Controllers\DashboardController;
 use Illuminate\Support\Facades\Route;
 
@@ -24,9 +24,13 @@ Route::post('/logout', [FirebaseLoginController::class, 'logout'])->name('logout
 Route::middleware('auth')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
-    // T2: read-only message log (T6 upgrades to live chat + handoff)
-    Route::get('/conversations', [ConversationLogController::class, 'index'])->name('conversations.index');
-    Route::get('/conversations/{contact}', [ConversationLogController::class, 'show'])->name('conversations.show');
+    // T6: live conversation panel (replaces the T2 read-only log)
+    Route::get('/conversations', [ConversationController::class, 'index'])->name('conversations.index');
+    Route::get('/conversations/{contact}', [ConversationController::class, 'show'])->name('conversations.show');
+    Route::get('/conversations/{contact}/poll', [ConversationController::class, 'poll'])->name('conversations.poll');
+    Route::post('/conversations/{contact}/reply', [ConversationController::class, 'reply'])->name('conversations.reply');
+    Route::post('/conversations/{contact}/take-over', [ConversationController::class, 'takeOver'])->name('conversations.takeover');
+    Route::post('/conversations/{contact}/return-to-bot', [ConversationController::class, 'returnToBot'])->name('conversations.return');
 
     // Future tiers:
     //   T8  -> /knowledge   (KB editor)

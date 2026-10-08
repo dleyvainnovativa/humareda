@@ -2,6 +2,7 @@
 
 namespace App\Services\Bot;
 
+use App\Events\ConversationHandedOff;
 use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Reservation;
@@ -39,7 +40,7 @@ class ConversationEngine
         $lang  = $contact->locale ?: 'es';
 
         if (Affirmation::wantsHuman($text)) {
-            return $this->goHuman($conversation, $ctx, $lang);
+            return $this->goHuman($contact, $conversation, $ctx, $lang);
         }
 
         $interp = $this->interpreter->interpret($text, $history, $slots);
@@ -50,7 +51,7 @@ class ConversationEngine
         }
 
         if ($interp['intent'] === 'talk_to_human') {
-            return $this->goHuman($conversation, $ctx, $lang);
+            return $this->goHuman($contact, $conversation, $ctx, $lang);
         }
 
         // Mid-flow states take priority over a fresh intent.
@@ -100,7 +101,7 @@ class ConversationEngine
         }
 
         $result = $this->booking->check($slots['date'], $slots['time'], (int) $slots['party_size']);
-        return $this->applyAvailability($conversation, $slots, $result, $lang);
+        return $this->applyAvailability($contact, $conversation, $slots, $result, $lang);
     }
 
     private function handleConfirming(Contact $contact, Conversation $conversation, array $slots, array $interp, string $text, string $lang): ?string
@@ -112,7 +113,7 @@ class ConversationEngine
                 return SlotFiller::promptFor($miss, $lang);
             }
             $result = $this->booking->check($merged['date'], $merged['time'], (int) $merged['party_size']);
-            return $this->applyAvailability($conversation, $merged, $result, $lang);
+            return $this->applyAvailability($contact, $conversation, $merged, $result, $lang);
         }
 
         if (Affirmation::isYes($text)) {
@@ -135,14 +136,18 @@ class ConversationEngine
             $this->persist($conversation, Conversation::STATE_IDLE, ['slots' => SlotFiller::empty()]);
             return Replies::confirmed($this->display($outcome['reservation']), $lang);
         }
-        return $this->applyAvailability($conversation, $slots, $outcome['result'], $lang, raceOnFull: true);
+        return $this->applyAvailability($contact, $conversation, $slots, $outcome['result'], $lang, raceOnFull: true);
     }
 
-    private function applyAvailability(Conversation $conversation, array $slots, AvailabilityResult $result, string $lang, bool $raceOnFull = false): ?string
+    private function applyAvailability(Contact $contact, Conversation $conversation, array $slots, AvailabilityResult $result, string $lang, bool $raceOnFull = false): ?string
     {
         $decision = self::mapAvailabilityOutcome($result, $lang, $slots['name'] ?? null, $raceOnFull);
         foreach ($decision['clear'] as $field) {
             $slots[$field] = null;
+        }
+        if ($decision['state'] === Conversation::STATE_HUMAN) {
+            $this->enterHuman($contact, $conversation, ['slots' => $slots], 'big_party');
+            return $decision['reply'];
         }
         $this->persist($conversation, $decision['state'], ['slots' => $slots]);
         return $decision['reply'];
@@ -290,7 +295,7 @@ class ConversationEngine
         if ($stage === 'confirm_mod') {
             // Changed again? re-evaluate. Yes? apply. No? keep.
             if ($mod !== ($ctx['mod_slots'] ?? [])) {
-                return $this->evaluateModify($conversation, $ctx, $reservation, $mod, $lang);
+                return $this->evaluateModify($contact, $conversation, $ctx, $reservation, $mod, $lang);
             }
             if (Affirmation::isYes($text)) {
                 return $this->applyModify($conversation, $reservation, $mod, $lang);
@@ -306,10 +311,10 @@ class ConversationEngine
         if ($mod === ($ctx['mod_slots'] ?? []) && ! array_filter($interp['slots'])) {
             return Replies::askWhatToChange($this->summaryById($cands, $ctx['target_id']) ?? $this->display($reservation), $lang);
         }
-        return $this->evaluateModify($conversation, $ctx, $reservation, $mod, $lang);
+        return $this->evaluateModify($contact, $conversation, $ctx, $reservation, $mod, $lang);
     }
 
-    private function evaluateModify(Conversation $conversation, array $ctx, Reservation $reservation, array $mod, string $lang): string
+    private function evaluateModify(Contact $contact, Conversation $conversation, array $ctx, Reservation $reservation, array $mod, string $lang): string
     {
         if ($miss = SlotFiller::missing($mod)) {
             $ctx = array_merge($ctx, ['stage' => 'collect', 'mod_slots' => $mod]);
@@ -325,7 +330,7 @@ class ConversationEngine
         }
 
         if ($decision['human']) {
-            $this->persist($conversation, Conversation::STATE_HUMAN, $ctx);
+            $this->enterHuman($contact, $conversation, $ctx, 'big_party');
             return $decision['reply'];
         }
 
@@ -385,11 +390,27 @@ class ConversationEngine
         return $reply;
     }
 
-    private function goHuman(Conversation $conversation, array $ctx, string $lang): string
+    private function goHuman(Contact $contact, Conversation $conversation, array $ctx, string $lang): string
     {
-        $this->persist($conversation, Conversation::STATE_HUMAN, $ctx);
-        // T6: notify staff (email + panel flag) here.
+        $this->enterHuman($contact, $conversation, $ctx, 'guest_request');
         return Replies::handoff($lang);
+    }
+
+    /**
+     * Transition a conversation to human control and notify staff (once).
+     * Fires ConversationHandedOff only on the idle->human edge so re-entering
+     * the flow doesn't spam staff.
+     */
+    private function enterHuman(Contact $contact, Conversation $conversation, array $ctx, string $reason): void
+    {
+        $wasHuman = $conversation->state === Conversation::STATE_HUMAN;
+        $this->persist($conversation, Conversation::STATE_HUMAN, $ctx);
+
+        if (! $wasHuman) {
+            event(new ConversationHandedOff(
+                $conversation->id, $contact->id, $reason, $contact->wa_id, $contact->name,
+            ));
+        }
     }
 
     // --------------------------------------------------------------- helpers
