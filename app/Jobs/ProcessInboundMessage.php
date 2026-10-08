@@ -6,7 +6,9 @@ use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\Setting;
+use App\Services\AI\TranscriptionService;
 use App\Services\Bot\ConversationEngine;
+use App\Services\Bot\InboundRouter;
 use App\Services\Bot\Replies;
 use App\Services\WhatsApp\ConversationResolver;
 use App\Services\WhatsApp\InboundParser;
@@ -17,16 +19,12 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Processes an inbound webhook payload AFTER the HTTP response is sent to Meta.
- * (T4) The placeholder responder is replaced by the ConversationEngine.
+ * Processes an inbound webhook payload after the HTTP response is sent to Meta.
+ * (T7) Adds voice-note transcription: audio is downloaded + transcribed, and
+ * the transcript flows into the same ConversationEngine as typed text. Non-text
+ * we can't use (stickers, locations, failed audio) gets a polite "please type".
  *
- *   - dedupe on wa_message_id
- *   - log every inbound message
- *   - resolve/update contact + conversation
- *   - mark read
- *   - stay silent if handed to a human
- *   - text        -> ConversationEngine (LLM intent + slot-filling + booking)
- *   - voice/media  -> ask to type (audio transcription arrives in T7)
+ * Replaces the T4 ProcessInboundMessage.
  */
 class ProcessInboundMessage
 {
@@ -38,6 +36,7 @@ class ProcessInboundMessage
         ConversationResolver $resolver,
         WhatsAppClient $wa,
         ConversationEngine $engine,
+        TranscriptionService $transcription,
     ): void {
         $parsed = InboundParser::parse($this->payload);
 
@@ -61,16 +60,14 @@ class ProcessInboundMessage
             $contact      = $inbound->contact;
             $conversation = $contact->conversation;
 
-            // Handed to a human: bot silent (message already logged).
             if ($conversation && $conversation->state === Conversation::STATE_HUMAN) {
-                continue;
+                continue; // handed to a human; logged, bot silent
             }
-
             if (! Setting::get('bot_enabled', true)) {
                 continue;
             }
 
-            $reply = $this->buildReply($engine, $contact, $msg);
+            $reply = $this->buildReply($engine, $transcription, $inbound, $contact, $msg);
 
             if ($reply !== null && $reply !== '') {
                 $wamid = $wa->sendText($contact->wa_id, $reply);
@@ -79,13 +76,34 @@ class ProcessInboundMessage
         }
     }
 
-    private function buildReply(ConversationEngine $engine, Contact $contact, array $msg): ?string
-    {
+    private function buildReply(
+        ConversationEngine $engine,
+        TranscriptionService $transcription,
+        Message $inbound,
+        Contact $contact,
+        array $msg,
+    ): ?string {
         $lang = $contact->locale ?: 'es';
 
-        // Non-text: politely ask for text (audio transcription is T7).
-        if ($msg['type'] !== 'text' || ! $msg['body']) {
-            return Replies::pleaseType($lang, audio: $msg['type'] === 'audio');
+        // Transcribe voice notes first.
+        $transcript = null;
+        if ($msg['type'] === 'audio' && ! empty($msg['media_id'])) {
+            $transcript = $transcription->transcribe($msg['media_id']);
+        }
+
+        $decision = InboundRouter::decide($msg['type'], $msg['body'], $transcript);
+
+        if ($decision['mode'] === 'please_type_audio') {
+            return Replies::pleaseType($lang, audio: true);
+        }
+        if ($decision['mode'] === 'please_type') {
+            return Replies::pleaseType($lang, audio: false);
+        }
+
+        // engine mode: persist the usable text (transcript) onto the log row so
+        // the panel + history show what was said, then run the engine.
+        if ($transcript && $inbound->exists && $inbound->body !== $transcript) {
+            $inbound->update(['body' => $transcript]);
         }
 
         $history = Message::where('contact_id', $contact->id)
@@ -97,10 +115,10 @@ class ProcessInboundMessage
             ->values();
 
         try {
-            return $engine->handle($contact, $msg['body'], $history);
+            return $engine->handle($contact, $decision['text'], $history);
         } catch (\Throwable $e) {
             Log::error('ConversationEngine failure', ['error' => $e->getMessage(), 'contact' => $contact->id]);
-            return Replies::faqFallback($lang); // graceful, never crash the guest
+            return Replies::faqFallback($lang);
         }
     }
 
