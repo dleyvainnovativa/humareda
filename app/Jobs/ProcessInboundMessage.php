@@ -6,6 +6,8 @@ use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\Setting;
+use App\Services\Bot\ConversationEngine;
+use App\Services\Bot\Replies;
 use App\Services\WhatsApp\ConversationResolver;
 use App\Services\WhatsApp\InboundParser;
 use App\Services\WhatsApp\WhatsAppClient;
@@ -15,20 +17,16 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Processes an inbound webhook payload AFTER the HTTP response is sent to Meta
- * (dispatched via dispatchAfterResponse). Deliberately NOT ShouldQueue: it runs
- * in-process, which suits shared hosting (no queue daemon needed for replies).
+ * Processes an inbound webhook payload AFTER the HTTP response is sent to Meta.
+ * (T4) The placeholder responder is replaced by the ConversationEngine.
  *
- * Responsibilities in T2:
- *   - dedupe on wa_message_id (Meta retries duplicates)
+ *   - dedupe on wa_message_id
  *   - log every inbound message
- *   - resolve/update the contact + conversation
- *   - mark the message read
- *   - stay SILENT if the conversation is handed to a human
- *   - otherwise send a PLACEHOLDER acknowledgement
- *
- * The placeholder responder in handleMessage() is replaced by the real
- * intent/booking engine in T4.
+ *   - resolve/update contact + conversation
+ *   - mark read
+ *   - stay silent if handed to a human
+ *   - text        -> ConversationEngine (LLM intent + slot-filling + booking)
+ *   - voice/media  -> ask to type (audio transcription arrives in T7)
  */
 class ProcessInboundMessage
 {
@@ -39,10 +37,10 @@ class ProcessInboundMessage
     public function handle(
         ConversationResolver $resolver,
         WhatsAppClient $wa,
+        ConversationEngine $engine,
     ): void {
         $parsed = InboundParser::parse($this->payload);
 
-        // Status callbacks (delivered/read receipts) — logged only for now.
         foreach ($parsed['statuses'] as $status) {
             Log::debug('WhatsApp status', $status);
         }
@@ -53,20 +51,17 @@ class ProcessInboundMessage
             }
 
             [$inbound, $isNew] = $this->logInbound($resolver, $msg);
-
-            // Duplicate delivery (Meta retry) — already processed, skip.
             if (! $isNew) {
-                Log::info('WhatsApp duplicate message ignored', ['wamid' => $msg['wamid']]);
+                Log::info('WhatsApp duplicate ignored', ['wamid' => $msg['wamid']]);
                 continue;
             }
 
-            // Blue ticks (best effort).
             $wa->markRead($msg['wamid']);
 
             $contact      = $inbound->contact;
             $conversation = $contact->conversation;
 
-            // Handed to a human: bot stays quiet, message is still logged above.
+            // Handed to a human: bot silent (message already logged).
             if ($conversation && $conversation->state === Conversation::STATE_HUMAN) {
                 continue;
             }
@@ -75,16 +70,42 @@ class ProcessInboundMessage
                 continue;
             }
 
-            $this->respondPlaceholder($wa, $contact, $msg);
+            $reply = $this->buildReply($engine, $contact, $msg);
+
+            if ($reply !== null && $reply !== '') {
+                $wamid = $wa->sendText($contact->wa_id, $reply);
+                $this->logOutbound($contact->id, $reply, $wamid);
+            }
+        }
+    }
+
+    private function buildReply(ConversationEngine $engine, Contact $contact, array $msg): ?string
+    {
+        $lang = $contact->locale ?: 'es';
+
+        // Non-text: politely ask for text (audio transcription is T7).
+        if ($msg['type'] !== 'text' || ! $msg['body']) {
+            return Replies::pleaseType($lang, audio: $msg['type'] === 'audio');
+        }
+
+        $history = Message::where('contact_id', $contact->id)
+            ->where('wa_message_id', '!=', $msg['wamid'])
+            ->orderByDesc('id')
+            ->limit(6)
+            ->get()
+            ->reverse()
+            ->values();
+
+        try {
+            return $engine->handle($contact, $msg['body'], $history);
+        } catch (\Throwable $e) {
+            Log::error('ConversationEngine failure', ['error' => $e->getMessage(), 'contact' => $contact->id]);
+            return Replies::faqFallback($lang); // graceful, never crash the guest
         }
     }
 
     /**
-     * Idempotent inbound logging. The unique index on wa_message_id makes this
-     * safe against concurrent retries: a duplicate insert throws and we treat
-     * it as "already seen".
-     *
-     * @return array{0: Message, 1: bool}  [message, wasCreated]
+     * @return array{0: Message, 1: bool}
      */
     private function logInbound(ConversationResolver $resolver, array $msg): array
     {
@@ -107,38 +128,21 @@ class ProcessInboundMessage
                 'created_at'    => now(),
             ]);
         } catch (QueryException $e) {
-            // Unique violation => another retry inserted it first.
             $existing = Message::where('wa_message_id', $msg['wamid'])->first();
             return [$existing?->loadMissing('contact.conversation') ?? new Message(), false];
         }
 
         $message->setRelation('contact', $contact);
-
         return [$message, true];
     }
 
-    /**
-     * TEMPORARY T2 responder — proves the round trip end to end.
-     * Replaced by the LLM intent + booking engine in T4.
-     */
-    private function respondPlaceholder(WhatsAppClient $wa, Contact $contact, array $msg): void
+    private function logOutbound(int $contactId, string $body, ?string $wamid): void
     {
-        if ($msg['type'] === 'text' && $msg['body']) {
-            $reply = "Recibí tu mensaje: \"{$msg['body']}\".\n\n"
-                . "(Asistente en configuración — la lógica de reservaciones se activa en la siguiente etapa.)";
-        } elseif ($msg['type'] === 'audio') {
-            $reply = "Recibí tu nota de voz. Por ahora estoy en configuración; pronto podré escucharla.";
-        } else {
-            $reply = "Recibí tu mensaje. Por ahora estoy en configuración.";
-        }
-
-        $wamid = $wa->sendText($contact->wa_id, $reply);
-
         Message::create([
-            'contact_id'    => $contact->id,
+            'contact_id'    => $contactId,
             'direction'     => Message::DIR_OUT,
             'type'          => 'text',
-            'body'          => $reply,
+            'body'          => $body,
             'wa_message_id' => $wamid,
             'sender'        => 'bot',
             'created_at'    => now(),
