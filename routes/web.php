@@ -3,6 +3,7 @@
 use App\Http\Controllers\Auth\FirebaseLoginController;
 use App\Http\Controllers\ConversationController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\KnowledgeController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -24,7 +25,7 @@ Route::post('/logout', [FirebaseLoginController::class, 'logout'])->name('logout
 Route::middleware('auth')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
-    // T6: live conversation panel (replaces the T2 read-only log)
+    // T6: live conversation panel
     Route::get('/conversations', [ConversationController::class, 'index'])->name('conversations.index');
     Route::get('/conversations/{contact}', [ConversationController::class, 'show'])->name('conversations.show');
     Route::get('/conversations/{contact}/poll', [ConversationController::class, 'poll'])->name('conversations.poll');
@@ -32,7 +33,13 @@ Route::middleware('auth')->group(function () {
     Route::post('/conversations/{contact}/take-over', [ConversationController::class, 'takeOver'])->name('conversations.takeover');
     Route::post('/conversations/{contact}/return-to-bot', [ConversationController::class, 'returnToBot'])->name('conversations.return');
 
+    // T8: knowledge-base editor
+    Route::get('/knowledge', [KnowledgeController::class, 'index'])->name('knowledge.index');
+    Route::post('/knowledge', [KnowledgeController::class, 'store'])->name('knowledge.store');
+    Route::put('/knowledge/{entry}', [KnowledgeController::class, 'update'])->name('knowledge.update');
+    Route::post('/knowledge/{entry}/toggle', [KnowledgeController::class, 'toggle'])->name('knowledge.toggle');
+    Route::delete('/knowledge/{entry}', [KnowledgeController::class, 'destroy'])->name('knowledge.destroy');
+
     // Future tiers:
-    //   T8  -> /knowledge   (KB editor)
     //   T10 -> /reservations (CRUD), /settings (capacity + reminders)
 });
