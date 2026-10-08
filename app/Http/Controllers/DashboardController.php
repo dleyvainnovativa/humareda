@@ -8,8 +8,7 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Support\Carbon;
 
 /**
- * Dashboard (T10 replaces the T1 version): KPIs, today's list, and a 7-day
- * covers outlook rendered as CSS bars (no JS chart lib — shared-hosting light).
+ * Dashboard (T11): adds a "por autorizar" KPI linking to the pending queue.
  */
 class DashboardController extends Controller
 {
@@ -18,7 +17,7 @@ class DashboardController extends Controller
         $today = now()->toDateString();
 
         $stats = [
-            'today_reservations' => Reservation::confirmed()->whereDate('reserved_date', $today)->count(),
+            'pending'            => Reservation::pending()->upcoming()->count(),
             'today_covers'       => (int) Reservation::confirmed()->whereDate('reserved_date', $today)->sum('party_size'),
             'upcoming'           => Reservation::confirmed()->upcoming()->count(),
             'contacts'           => Contact::count(),
@@ -29,7 +28,6 @@ class DashboardController extends Controller
             ->orderBy('reserved_time')
             ->get();
 
-        // Next 7 days covers outlook.
         $outlook = [];
         $max = 1;
         for ($i = 0; $i < 7; $i++) {

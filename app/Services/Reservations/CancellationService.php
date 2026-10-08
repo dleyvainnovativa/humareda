@@ -8,9 +8,9 @@ use App\Services\Availability\BookingService;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Cancels a reservation: frees its covers, marks it cancelled, and cancels any
- * pending reminders. Idempotent-ish — cancelling an already-cancelled
- * reservation is a no-op (covers are only released for a confirmed one).
+ * Cancels a reservation. (T11) Works for confirmed AND pending (a guest can
+ * cancel a request still under review). Frees any held covers (no-op in the
+ * advisory model), marks cancelled, and cancels pending reminders.
  */
 class CancellationService
 {
@@ -18,12 +18,14 @@ class CancellationService
 
     public function cancel(Reservation $reservation): bool
     {
-        if ($reservation->status !== Reservation::STATUS_CONFIRMED) {
+        if (! in_array($reservation->status, [Reservation::STATUS_CONFIRMED, Reservation::STATUS_PENDING], true)) {
             return false;
         }
 
-        // Give the covers back (own transaction + row lock inside).
-        $this->booking->release($reservation);
+        // Harmless if no covers were held (advisory model).
+        if ($reservation->status === Reservation::STATUS_CONFIRMED) {
+            $this->booking->release($reservation);
+        }
 
         DB::transaction(function () use ($reservation) {
             $reservation->update([

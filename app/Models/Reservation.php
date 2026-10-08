@@ -8,9 +8,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Reservation extends Model
 {
-    public const STATUS_PENDING   = 'pending';
+    public const STATUS_PENDING   = 'pending';   // captured, awaiting human authorization (T11)
     public const STATUS_CONFIRMED = 'confirmed';
     public const STATUS_CANCELLED = 'cancelled';
+    public const STATUS_REJECTED  = 'rejected';   // human declined the request (T11)
     public const STATUS_COMPLETED = 'completed';
     public const STATUS_NO_SHOW   = 'no_show';
 
@@ -20,7 +21,10 @@ class Reservation extends Model
         'reserved_time',
         'party_size',
         'name',
+        'reference_contact',
         'status',
+        'reviewed_at',
+        'reviewed_by',
         'source',
         'notes',
         'cancelled_at',
@@ -31,6 +35,7 @@ class Reservation extends Model
         return [
             'reserved_date' => 'date',
             'party_size'    => 'integer',
+            'reviewed_at'   => 'datetime',
             'cancelled_at'  => 'datetime',
         ];
     }
@@ -48,6 +53,11 @@ class Reservation extends Model
     public function scopeConfirmed($query)
     {
         return $query->where('status', self::STATUS_CONFIRMED);
+    }
+
+    public function scopePending($query)
+    {
+        return $query->where('status', self::STATUS_PENDING);
     }
 
     public function scopeUpcoming($query)

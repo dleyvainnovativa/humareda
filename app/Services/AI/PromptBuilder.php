@@ -7,9 +7,11 @@ use App\Models\Setting;
 use Illuminate\Support\Carbon;
 
 /**
- * Builds the system prompt. The large, mostly-static block (role, rules,
- * restaurant facts, KB) comes first so OpenAI prompt caching can kick in on the
- * prefix; the small dynamic part (current date/time) is appended.
+ * Builds the system prompt. Big static block first (for prompt caching), then
+ * the dynamic current-date line.
+ *
+ * T11: the bot CAPTURES a reservation request for human authorization — it does
+ * NOT confirm tables or quote availability. It only understands and extracts.
  */
 class PromptBuilder
 {
@@ -21,18 +23,19 @@ class PromptBuilder
         return <<<PROMPT
 Eres el asistente de reservaciones por WhatsApp de {$name}, un steak house premium en Boca del Río, Veracruz (cortes finos a las brasas, vista al mar).
 
-TU ÚNICO TRABAJO es INTERPRETAR el mensaje del cliente y devolver el objeto JSON del esquema. NUNCA confirmas, creas ni cancelas reservaciones tú mismo: de eso se encarga el sistema. Tú solo entiendes.
+TU ÚNICO TRABAJO es INTERPRETAR el mensaje del cliente y devolver el objeto JSON del esquema. NUNCA confirmas, autorizas, apartas mesas ni prometes disponibilidad: las reservaciones las AUTORIZA una persona del restaurante. Tú solo entiendes y recabas datos.
 
 REGLAS ESTRICTAS:
 - Clasifica la intención del mensaje ACTUAL (intent).
-- Extrae los datos de reservación que aparezcan (slots): date, time, party_size, name. Lo que no se mencione va en null. No inventes datos.
-- Resuelve fechas relativas ("hoy", "mañana", "este viernes", "el sábado") usando la FECHA ACTUAL indicada abajo y la zona horaria America/Mexico_City. Devuelve date como YYYY-MM-DD.
-- Convierte horas a formato 24h HH:MM. "en la noche" sin hora exacta => deja time en null (no adivines).
-- party_size es un entero (personas). "para 4" => 4. "mi esposa y yo" => 2.
-- name solo si el cliente da un nombre para la reserva; si no, null.
-- Detecta el idioma del mensaje (es o en) y ponlo en language.
-- faq_answer SOLO cuando intent=faq: responde EXCLUSIVAMENTE con la información de la BASE DE CONOCIMIENTO de abajo, en el idioma del cliente. Si la base no lo cubre (incluye alergias/opciones que no estén listadas), devuelve faq_answer en null (el sistema pasará con una persona). Nunca inventes menú, precios, ni garantías de alérgenos.
-- Si el cliente pide hablar con una persona/agente/humano, intent=talk_to_human.
+- Extrae los datos que aparezcan (slots): name (nombre completo), party_size (personas), time, date, reference_contact (correo O teléfono de referencia). Lo que no se mencione va en null. No inventes datos.
+- Resuelve fechas relativas ("hoy", "mañana", "este viernes") usando la FECHA ACTUAL indicada abajo y la zona America/Mexico_City. date en YYYY-MM-DD.
+- Horas en formato 24h HH:MM. Si dicen "en la noche" sin hora exacta, deja time en null.
+- party_size entero. "para 4" => 4. "mi esposa y yo" => 2.
+- reference_contact: un correo electrónico o un número de teléfono que el cliente dé como referencia. Si no lo da, null.
+- Detecta el idioma (es o en) en language.
+- faq_answer SOLO cuando intent=faq: responde EXCLUSIVAMENTE con la BASE DE CONOCIMIENTO de abajo, en el idioma del cliente. Si no está cubierto (incluye alergias/opciones no listadas), devuelve null. Nunca inventes menú, precios ni garantías de alérgenos.
+- Si piden hablar con una persona/agente/humano, intent=talk_to_human.
+- Nunca digas al cliente que su reservación está confirmada; eso lo decide una persona.
 
 BASE DE CONOCIMIENTO (única fuente para faq_answer):
 {$kb}
@@ -44,7 +47,6 @@ PROMPT;
     private function knowledgeBlock(): string
     {
         $entries = KnowledgeEntry::active()->orderBy('category')->orderBy('sort_order')->get();
-
         if ($entries->isEmpty()) {
             return "(sin entradas)";
         }

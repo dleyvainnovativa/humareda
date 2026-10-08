@@ -3,24 +3,26 @@
 
 @section('content')
 @php($cards = [
-    ['label' => 'Reservaciones hoy', 'value' => $stats['today_reservations'], 'icon' => 'fa-calendar-check'],
-    ['label' => 'Comensales hoy',    'value' => $stats['today_covers'],       'icon' => 'fa-users'],
-    ['label' => 'Próximas',          'value' => $stats['upcoming'],           'icon' => 'fa-clock'],
-    ['label' => 'Contactos',         'value' => $stats['contacts'],           'icon' => 'fa-address-book'],
+    ['label' => 'Por autorizar', 'value' => $stats['pending'],      'icon' => 'fa-bell',           'href' => route('reservations.index', ['status'=>'pending']), 'alert' => $stats['pending'] > 0],
+    ['label' => 'Comensales hoy','value' => $stats['today_covers'], 'icon' => 'fa-users',          'href' => null, 'alert' => false],
+    ['label' => 'Próximas',      'value' => $stats['upcoming'],     'icon' => 'fa-calendar-check', 'href' => null, 'alert' => false],
+    ['label' => 'Contactos',     'value' => $stats['contacts'],     'icon' => 'fa-address-book',   'href' => null, 'alert' => false],
 ])
 
 <div class="row g-3 mb-4">
     @foreach ($cards as $c)
         <div class="col-6 col-xl-3">
-            <div class="hp-card h-100"><div class="hp-card-body">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div class="hp-metric">
-                        <span class="hp-metric-label">{{ $c['label'] }}</span>
-                        <span class="hp-metric-value">{{ $c['value'] }}</span>
+            <a href="{{ $c['href'] ?? '#' }}" class="text-decoration-none">
+                <div class="hp-card h-100" @if($c['alert']) style="border-color:var(--hp-ember);" @endif><div class="hp-card-body">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="hp-metric">
+                            <span class="hp-metric-label">{{ $c['label'] }}</span>
+                            <span class="hp-metric-value" @if($c['alert']) style="color:var(--hp-primary);" @endif>{{ $c['value'] }}</span>
+                        </div>
+                        <span class="hp-metric-icon"><i class="fa-solid {{ $c['icon'] }}"></i></span>
                     </div>
-                    <span class="hp-metric-icon"><i class="fa-solid {{ $c['icon'] }}"></i></span>
-                </div>
-            </div></div>
+                </div></div>
+            </a>
         </div>
     @endforeach
 </div>
@@ -46,11 +48,11 @@
     <div class="col-12 col-lg-7">
         <div class="hp-card h-100"><div class="hp-card-body">
             <div class="d-flex justify-content-between align-items-center mb-3">
-                <h2 class="h6 fw-semibold mb-0">Reservaciones de hoy</h2>
+                <h2 class="h6 fw-semibold mb-0">Confirmadas de hoy</h2>
                 <a href="{{ route('reservations.index') }}" class="btn btn-sm btn-outline-secondary">Ver todas</a>
             </div>
             @if ($todayList->isEmpty())
-                <p class="text-secondary small mb-0 py-4 text-center"><i class="fa-regular fa-calendar me-1"></i> Sin reservaciones para hoy.</p>
+                <p class="text-secondary small mb-0 py-4 text-center"><i class="fa-regular fa-calendar me-1"></i> Sin reservaciones confirmadas para hoy.</p>
             @else
                 <div class="table-responsive">
                     <table class="hp-table">

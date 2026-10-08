@@ -25,10 +25,12 @@ Route::post('/logout', [FirebaseLoginController::class, 'logout'])->name('logout
 Route::middleware('auth')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
-    // Reservations (staff CRUD)
+    // Reservations (staff) — T11 adds approve/reject for the pending queue
     Route::get('/reservations', [ReservationController::class, 'index'])->name('reservations.index');
     Route::post('/reservations', [ReservationController::class, 'store'])->name('reservations.store');
     Route::put('/reservations/{reservation}', [ReservationController::class, 'update'])->name('reservations.update');
+    Route::post('/reservations/{reservation}/approve', [ReservationController::class, 'approve'])->name('reservations.approve');
+    Route::post('/reservations/{reservation}/reject', [ReservationController::class, 'reject'])->name('reservations.reject');
     Route::post('/reservations/{reservation}/cancel', [ReservationController::class, 'cancel'])->name('reservations.cancel');
 
     // Live conversation panel (T6)
@@ -46,7 +48,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/knowledge/{entry}/toggle', [KnowledgeController::class, 'toggle'])->name('knowledge.toggle');
     Route::delete('/knowledge/{entry}', [KnowledgeController::class, 'destroy'])->name('knowledge.destroy');
 
-    // Settings (T10) — capacity + reminders + globals
+    // Settings (T10)
     Route::get('/settings', [SettingsController::class, 'edit'])->name('settings.edit');
     Route::post('/settings/hours', [SettingsController::class, 'updateHours'])->name('settings.hours');
     Route::post('/settings/general', [SettingsController::class, 'updateGeneral'])->name('settings.general');

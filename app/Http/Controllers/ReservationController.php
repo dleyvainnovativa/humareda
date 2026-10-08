@@ -4,54 +4,78 @@ namespace App\Http\Controllers;
 
 use App\Models\Contact;
 use App\Models\Reservation;
-use App\Services\Availability\BookingService;
 use App\Services\Reservations\CancellationService;
+use App\Services\Reservations\OccupancyReport;
+use App\Services\Reservations\ReviewService;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Carbon;
 
 /**
- * Staff reservations management. Create/modify go through the same
- * availability-locked BookingService the bot uses, so cover accounting stays
- * correct no matter who books. Cancel uses CancellationService (frees covers +
- * cancels reminders).
+ * Staff reservations (T11): a pending queue to authorize, plus day-by-day
+ * management. Approve/reject run through ReviewService (messages the guest +
+ * sets status). Staff-created bookings are confirmed directly (staff are the
+ * authority); covers are not held — load shown is advisory (OccupancyReport).
  */
 class ReservationController extends Controller
 {
     public function __construct(
-        private BookingService $booking,
+        private ReviewService $review,
         private CancellationService $cancellation,
+        private OccupancyReport $occupancy,
     ) {}
 
     public function index(Request $request): View
     {
+        $status = $request->query('status', 'pending');
         $date   = $request->query('date', now()->toDateString());
-        $status = $request->query('status', 'confirmed');
+        $pendingCount = Reservation::pending()->upcoming()->count();
+        $load = [];
 
-        $query = Reservation::with('contact')
-            ->whereDate('reserved_date', $date)
-            ->orderBy('reserved_time');
-
-        if ($status !== 'all') {
-            $query->where('status', $status);
+        if ($status === 'pending') {
+            $reservations = Reservation::with('contact')->pending()->upcoming()
+                ->orderBy('reserved_date')->orderBy('reserved_time')->get();
+            foreach ($reservations as $r) {
+                $load[$r->id] = $this->occupancy->summary(
+                    $r->reserved_date->toDateString(), substr((string) $r->reserved_time, 0, 5)
+                );
+            }
+        } else {
+            $q = Reservation::with('contact')->whereDate('reserved_date', $date)
+                ->orderBy('reserved_time');
+            if ($status !== 'all') {
+                $q->where('status', $status);
+            }
+            $reservations = $q->get();
         }
 
-        $reservations = $query->get();
         $covers = (int) $reservations->where('status', 'confirmed')->sum('party_size');
 
-        return view('reservations.index', compact('reservations', 'date', 'status', 'covers'));
+        return view('reservations.index', compact('reservations', 'status', 'date', 'covers', 'pendingCount', 'load'));
+    }
+
+    public function approve(Reservation $reservation): JsonResponse
+    {
+        $ok = $this->review->approve($reservation, $this->staff());
+        return response()->json(['ok' => $ok]);
+    }
+
+    public function reject(Reservation $reservation): JsonResponse
+    {
+        $ok = $this->review->reject($reservation, $this->staff());
+        return response()->json(['ok' => $ok]);
     }
 
     public function store(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'phone'      => ['required', 'string', 'max:20'],
-            'name'       => ['required', 'string', 'max:120'],
-            'date'       => ['required', 'date'],
-            'time'       => ['required', 'date_format:H:i'],
-            'party_size' => ['required', 'integer', 'min:1', 'max:200'],
-            'notes'      => ['nullable', 'string', 'max:500'],
+            'phone'             => ['required', 'string', 'max:20'],
+            'name'              => ['required', 'string', 'max:120'],
+            'reference_contact' => ['nullable', 'string', 'max:160'],
+            'date'              => ['required', 'date'],
+            'time'              => ['required', 'date_format:H:i'],
+            'party_size'        => ['required', 'integer', 'min:1', 'max:500'],
+            'notes'             => ['nullable', 'string', 'max:500'],
         ]);
 
         $contact = Contact::firstOrCreate(
@@ -59,20 +83,20 @@ class ReservationController extends Controller
             ['name' => $data['name']],
         );
 
-        $outcome = $this->booking->book(
-            $contact->id, $data['date'], $data['time'], (int) $data['party_size'],
-            $data['name'], $data['notes'] ?? null, 'staff',
-        );
+        // Staff create = authorized directly (observer schedules the reminder).
+        Reservation::create([
+            'contact_id'        => $contact->id,
+            'reserved_date'     => $data['date'],
+            'reserved_time'     => $data['time'],
+            'party_size'        => (int) $data['party_size'],
+            'name'              => $data['name'],
+            'reference_contact' => $data['reference_contact'] ?? null,
+            'status'            => Reservation::STATUS_CONFIRMED,
+            'source'            => 'staff',
+            'notes'             => $data['notes'] ?? null,
+        ]);
 
-        if ($outcome['reservation']) {
-            return response()->json(['ok' => true]);
-        }
-
-        return response()->json([
-            'ok'      => false,
-            'status'  => $outcome['result']->status,
-            'message' => $this->statusMessage($outcome['result']->status, $outcome['result']->alternatives),
-        ], 422);
+        return response()->json(['ok' => true]);
     }
 
     public function update(Request $request, Reservation $reservation): JsonResponse
@@ -81,18 +105,18 @@ class ReservationController extends Controller
             'name'       => ['required', 'string', 'max:120'],
             'date'       => ['required', 'date'],
             'time'       => ['required', 'date_format:H:i'],
-            'party_size' => ['required', 'integer', 'min:1', 'max:200'],
+            'party_size' => ['required', 'integer', 'min:1', 'max:500'],
         ]);
 
-        $outcome = $this->booking->modify($reservation, $data['date'], $data['time'], (int) $data['party_size'], $data['name']);
+        // Staff edit applies directly (observer reschedules the reminder).
+        $reservation->update([
+            'reserved_date' => $data['date'],
+            'reserved_time' => $data['time'],
+            'party_size'    => (int) $data['party_size'],
+            'name'          => $data['name'],
+        ]);
 
-        if ($outcome['reservation']) {
-            return response()->json(['ok' => true]);
-        }
-        return response()->json([
-            'ok'      => false,
-            'message' => $this->statusMessage($outcome['result']->status, $outcome['result']->alternatives),
-        ], 422);
+        return response()->json(['ok' => true]);
     }
 
     public function cancel(Reservation $reservation): JsonResponse
@@ -101,15 +125,8 @@ class ReservationController extends Controller
         return response()->json(['ok' => true]);
     }
 
-    private function statusMessage(string $status, array $alts = []): string
+    private function staff(): string
     {
-        return match ($status) {
-            'full'          => $alts ? 'Lleno. Horarios cercanos: ' . implode(', ', $alts) : 'Sin disponibilidad en ese horario.',
-            'outside_hours' => 'Fuera del horario de servicio.' . ($alts ? ' Cercanos: ' . implode(', ', $alts) : ''),
-            'closed'        => 'Cerrado ese día.',
-            'needs_human'   => 'Grupo grande: requiere revisión manual (ajusta el cupo máximo si procede).',
-            'invalid'       => 'Datos inválidos (revisa fecha/personas).',
-            default         => 'No se pudo completar.',
-        };
+        return request()->user()?->email ?? 'staff';
     }
 }

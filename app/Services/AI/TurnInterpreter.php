@@ -7,15 +7,8 @@ use Illuminate\Support\Collection;
 
 /**
  * Turns the latest guest message (+ recent history + in-progress slots) into a
- * normalized interpretation the ConversationEngine can act on.
- *
- * Output shape (always returns something safe, even if the model fails):
- *   [
- *     'intent'     => string,
- *     'language'   => 'es'|'en',
- *     'slots'      => ['date'=>?string,'time'=>?string,'party_size'=>?int,'name'=>?string],
- *     'faq_answer' => ?string,
- *   ]
+ * normalized interpretation. Always returns something safe even if the model
+ * fails. T11: normalizes the new reference_contact slot.
  */
 class TurnInterpreter
 {
@@ -28,7 +21,6 @@ class TurnInterpreter
     {
         $messages = [['role' => 'system', 'content' => $this->prompts->system()]];
 
-        // Recent turns for context (oldest first). Map in->user, out->assistant.
         foreach ($history as $m) {
             /** @var Message $m */
             if (! $m->body) {
@@ -40,18 +32,14 @@ class TurnInterpreter
             ];
         }
 
-        // Tell the model what's already collected so it only fills the gaps.
         $messages[] = [
             'role'    => 'system',
-            'content' => 'Reservación en progreso (datos ya recabados, no los vuelvas a pedir): '
+            'content' => 'Solicitud en progreso (datos ya recabados, no los vuelvas a pedir): '
                 . json_encode($currentSlots, JSON_UNESCAPED_UNICODE),
         ];
-
         $messages[] = ['role' => 'user', 'content' => $currentText];
 
-        $raw = $this->client->structured($messages, TurnSchema::schema());
-
-        return $this->normalize($raw);
+        return $this->normalize($this->client->structured($messages, TurnSchema::schema()));
     }
 
     private function normalize(?array $raw): array
@@ -60,19 +48,14 @@ class TurnInterpreter
         if (! in_array($intent, TurnSchema::INTENTS, true)) {
             $intent = 'other';
         }
-
         $language = ($raw['language'] ?? 'es') === 'en' ? 'en' : 'es';
 
         $slots = $raw['slots'] ?? [];
-        $date  = $this->cleanDate($slots['date'] ?? null);
-        $time  = $this->cleanTime($slots['time'] ?? null);
         $party = $slots['party_size'] ?? null;
         $party = is_numeric($party) ? (int) $party : null;
         if ($party !== null && $party < 1) {
             $party = null;
         }
-        $name = isset($slots['name']) && is_string($slots['name']) ? trim($slots['name']) : null;
-        $name = $name === '' ? null : $name;
 
         $faq = $raw['faq_answer'] ?? null;
         $faq = is_string($faq) && trim($faq) !== '' ? trim($faq) : null;
@@ -80,28 +63,36 @@ class TurnInterpreter
         return [
             'intent'     => $intent,
             'language'   => $language,
-            'slots'      => ['date' => $date, 'time' => $time, 'party_size' => $party, 'name' => $name],
+            'slots'      => [
+                'name'              => $this->str($slots['name'] ?? null),
+                'party_size'        => $party,
+                'time'              => $this->cleanTime($slots['time'] ?? null),
+                'date'              => $this->cleanDate($slots['date'] ?? null),
+                'reference_contact' => $this->str($slots['reference_contact'] ?? null),
+            ],
             'faq_answer' => $faq,
             '_model_ok'  => $raw !== null,
         ];
     }
 
-    private function cleanDate(?string $d): ?string
+    private function str($v): ?string
     {
-        if (! $d) {
+        if (! is_string($v)) {
             return null;
         }
-        return preg_match('/^\d{4}-\d{2}-\d{2}$/', $d) ? $d : null;
+        $v = trim($v);
+        return $v === '' ? null : $v;
+    }
+
+    private function cleanDate(?string $d): ?string
+    {
+        return $d && preg_match('/^\d{4}-\d{2}-\d{2}$/', $d) ? $d : null;
     }
 
     private function cleanTime(?string $t): ?string
     {
-        if (! $t) {
-            return null;
-        }
-        if (preg_match('/^(\d{1,2}):(\d{2})$/', $t, $m)) {
-            $h = (int) $m[1];
-            $min = (int) $m[2];
+        if ($t && preg_match('/^(\d{1,2}):(\d{2})$/', $t, $m)) {
+            $h = (int) $m[1]; $min = (int) $m[2];
             if ($h >= 0 && $h < 24 && $min >= 0 && $min < 60) {
                 return sprintf('%02d:%02d', $h, $min);
             }

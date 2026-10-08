@@ -3,24 +3,19 @@
 namespace App\Services\Bot;
 
 /**
- * Pure slot-filling helpers for the booking flow. No DB/framework so the
- * merge + missing-field logic can be unit-tested (see docs/verify_t4.php).
- *
- * Collection order (what we ask next): date -> party_size -> time -> name.
+ * Pure slot-filling for the reservation REQUEST (T11). Five fields, asked in
+ * the order the client listed them:
+ *   name -> party_size -> time -> date -> reference_contact
  */
 class SlotFiller
 {
-    public const FIELDS = ['date', 'party_size', 'time', 'name'];
+    public const FIELDS = ['name', 'party_size', 'time', 'date', 'reference_contact'];
 
     public static function empty(): array
     {
-        return ['date' => null, 'time' => null, 'party_size' => null, 'name' => null];
+        return ['name' => null, 'party_size' => null, 'time' => null, 'date' => null, 'reference_contact' => null];
     }
 
-    /**
-     * Merge freshly extracted slots over existing ones. A non-null extracted
-     * value wins (lets guests correct: "mejor 6 personas"); nulls don't erase.
-     */
     public static function merge(array $existing, array $extracted): array
     {
         $out = array_merge(self::empty(), $existing);
@@ -32,9 +27,6 @@ class SlotFiller
         return $out;
     }
 
-    /**
-     * First missing field in ask-order, or null if all present.
-     */
     public static function missing(array $slots): ?string
     {
         foreach (self::FIELDS as $f) {
@@ -53,11 +45,12 @@ class SlotFiller
     public static function promptFor(string $field, string $lang): string
     {
         return match ($field) {
-            'date'       => Replies::askDate($lang),
-            'party_size' => Replies::askParty($lang),
-            'time'       => Replies::askTime($lang),
-            'name'       => Replies::askName($lang),
-            default      => Replies::fallback($lang),
+            'name'              => Replies::askName($lang),
+            'party_size'        => Replies::askParty($lang),
+            'time'              => Replies::askTime($lang),
+            'date'              => Replies::askDate($lang),
+            'reference_contact' => Replies::askReference($lang),
+            default             => Replies::fallback($lang),
         };
     }
 }
