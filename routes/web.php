@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Auth\FirebaseLoginController;
+use App\Http\Controllers\ConversationLogController;
 use App\Http\Controllers\DashboardController;
 use Illuminate\Support\Facades\Route;
 
@@ -23,8 +24,11 @@ Route::post('/logout', [FirebaseLoginController::class, 'logout'])->name('logout
 Route::middleware('auth')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
-    // Future tiers mount here:
-    //   T6  -> /conversations  (live chat + handoff)
-    //   T8  -> /knowledge      (KB editor)
-    //   T10 -> /reservations   (CRUD), /settings (capacity + reminders)
+    // T2: read-only message log (T6 upgrades to live chat + handoff)
+    Route::get('/conversations', [ConversationLogController::class, 'index'])->name('conversations.index');
+    Route::get('/conversations/{contact}', [ConversationLogController::class, 'show'])->name('conversations.show');
+
+    // Future tiers:
+    //   T8  -> /knowledge   (KB editor)
+    //   T10 -> /reservations (CRUD), /settings (capacity + reminders)
 });
