@@ -8,28 +8,19 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Write-side: creates and releases reservations with CORRECT concurrency.
+ * Write-side: create, release, and MODIFY reservations with correct concurrency.
+ * (T5 adds modify() + checkModify() to the T3 version — this file replaces it.)
  *
- * The oversell hazard: two guests pass an advisory availability check for the
- * same tight slot within milliseconds, then both write. We close it by making
- * check-and-write atomic:
- *
- *   1. insertOrIgnore the spanned slot rows (so they exist to be locked)
- *   2. SELECT ... FOR UPDATE those rows (serializes concurrent bookers)
- *   3. re-decide against the freshly locked covers (authoritative)
- *   4. only then increment covers + create the reservation
- *
- * The advisory AvailabilityService::check() is for conversation UX; THIS is the
- * source of truth. Never create a reservation outside book().
+ * The oversell guard (book): insertOrIgnore spanned slot rows -> SELECT FOR
+ * UPDATE -> re-decide on locked covers -> increment + create. Never create a
+ * Reservation outside book()/modify().
  */
 class BookingService
 {
     public function __construct(private AvailabilityService $availability) {}
 
-    /**
-     * Attempt to book. Returns ['result' => AvailabilityResult, 'reservation' => ?Reservation].
-     * A reservation is present only when result->confirmable() is true.
-     */
+    // ----------------------------------------------------------------- book
+
     public function book(
         int $contactId,
         string $date,
@@ -44,7 +35,6 @@ class BookingService
             return ['result' => new AvailabilityResult('closed', $date, null, $party), 'reservation' => null];
         }
 
-        // Reject past datetimes up front (advisory check also does this).
         $advisory = $this->check($date, $time, $party);
         if (! $advisory->confirmable()) {
             return ['result' => $advisory, 'reservation' => null];
@@ -54,33 +44,16 @@ class BookingService
         $spanned = SlotCalculator::spannedSlots($snapped, $cfg['turn_minutes'], $cfg['slot_minutes']);
 
         return DB::transaction(function () use ($contactId, $date, $snapped, $spanned, $party, $name, $notes, $source, $cfg) {
-            // 1. Ensure rows exist so we can lock them.
-            $now  = now();
-            $rows = array_map(fn ($slot) => [
-                'reserved_date' => $date,
-                'slot_start'    => $slot,
-                'covers'        => 0,
-                'created_at'    => $now,
-                'updated_at'    => $now,
-            ], $spanned);
-            DB::table('slot_occupancy')->insertOrIgnore($rows);
+            $this->ensureRows($date, $spanned);
 
-            // 2. Lock them.
-            $locked = SlotOccupancy::where('reserved_date', $date)
-                ->whereIn('slot_start', $spanned)
-                ->lockForUpdate()
-                ->get()
-                ->keyBy(fn ($r) => substr((string) $r->slot_start, 0, 5));
-
+            $locked = $this->lock($date, $spanned);
             $occupancy = $locked->map(fn ($r) => (int) $r->covers)->all();
 
-            // 3. Authoritative re-decision on locked data.
             $result = AvailabilityService::decide($cfg, $occupancy, $party, $snapped, $date);
             if (! $result->confirmable()) {
                 return ['result' => $result, 'reservation' => null];
             }
 
-            // 4. Commit covers + reservation.
             foreach ($spanned as $slot) {
                 $row = $locked->get($slot);
                 $row->covers += $party;
@@ -102,19 +75,161 @@ class BookingService
         });
     }
 
+    // --------------------------------------------------------------- modify
+
     /**
-     * Give a reservation's covers back to its slots. Used by cancellation and
-     * as the first half of a modify (T5). Does NOT change reservation status —
-     * the caller owns that. Idempotency: pass a reservation that still holds
-     * its covers; call once per cancellation.
+     * Atomically move/resize a reservation: release its old covers and take the
+     * new ones in ONE locked transaction, re-checking availability against the
+     * new slots WITH the reservation's own old covers discounted (so changing
+     * only the party size, or shifting within an overlapping window, doesn't
+     * see itself as competition). On failure the original is untouched.
+     *
+     * @return array{result:AvailabilityResult,reservation:?Reservation}
      */
+    public function modify(Reservation $r, string $date, string $time, int $party, ?string $name = null): array
+    {
+        $cfgNew = $this->availability->configFor($date);
+        if (! $cfgNew) {
+            return ['result' => new AvailabilityResult('closed', $date, null, $party), 'reservation' => null];
+        }
+        if ($date < now()->toDateString()) {
+            return ['result' => new AvailabilityResult('invalid', $date, null, $party, [], $cfgNew['auto_confirm_max']), 'reservation' => null];
+        }
+
+        $oldDate  = $this->dateStr($r->reserved_date);
+        $cfgOld   = $this->availability->configFor($oldDate) ?? $cfgNew;
+        $oldSnap  = SlotCalculator::snapToGrid(substr((string) $r->reserved_time, 0, 5), $cfgOld['slot_minutes']);
+        $oldSpan  = SlotCalculator::spannedSlots($oldSnap, $cfgOld['turn_minutes'], $cfgOld['slot_minutes']);
+        $oldParty = (int) $r->party_size;
+
+        $newSnap  = SlotCalculator::snapToGrid($time, $cfgNew['slot_minutes']);
+        $newSpan  = SlotCalculator::spannedSlots($newSnap, $cfgNew['turn_minutes'], $cfgNew['slot_minutes']);
+        $sameDate = $date === $oldDate;
+
+        return DB::transaction(function () use ($r, $date, $oldDate, $newSnap, $newSpan, $oldSpan, $party, $oldParty, $name, $cfgNew, $sameDate) {
+            // Lock union of old + new slots in a deterministic (date, slot) order
+            // to avoid deadlocks.
+            $need = [];
+            foreach ($oldSpan as $s) { $need[$oldDate][$s] = true; }
+            foreach ($newSpan as $s) { $need[$date][$s]    = true; }
+            ksort($need);
+
+            $locked = [];
+            foreach ($need as $d => $set) {
+                $slots = array_keys($set);
+                sort($slots);
+                $this->ensureRows($d, $slots);
+                foreach ($this->lock($d, $slots) as $slot => $row) {
+                    $locked["{$d}|{$slot}"] = $row;
+                }
+            }
+
+            // Occupancy for the new slots, discounting our own old covers where
+            // the old booking overlaps the new (same date + same slot).
+            $occNew = [];
+            foreach ($newSpan as $s) {
+                $cov = (int) ($locked["{$date}|{$s}"]->covers ?? 0);
+                if ($sameDate && in_array($s, $oldSpan, true)) {
+                    $cov -= $oldParty;
+                }
+                $occNew[$s] = max(0, $cov);
+            }
+
+            $result = AvailabilityService::decide($cfgNew, $occNew, $party, $newSnap, $date);
+            if (! $result->confirmable()) {
+                return ['result' => $result, 'reservation' => null]; // rollback
+            }
+
+            // Release old covers, then take new (overlap nets correctly).
+            foreach ($oldSpan as $s) {
+                $row = $locked["{$oldDate}|{$s}"];
+                $row->covers = max(0, (int) $row->covers - $oldParty);
+                $row->save();
+            }
+            foreach ($newSpan as $s) {
+                $row = $locked["{$date}|{$s}"];
+                $row->covers += $party;
+                $row->save();
+            }
+
+            $r->update([
+                'reserved_date' => $date,
+                'reserved_time' => $newSnap,
+                'party_size'    => $party,
+                'name'          => $name ?: $r->name,
+            ]);
+
+            return ['result' => $result, 'reservation' => $r];
+        });
+    }
+
+    /**
+     * Advisory availability for a modify (no lock/write), with the reservation's
+     * own covers discounted. Mirrors modify()'s math for the conversation UX.
+     */
+    public function checkModify(Reservation $r, string $date, string $time, int $party): AvailabilityResult
+    {
+        $cfgNew = $this->availability->configFor($date);
+        if (! $cfgNew) {
+            return new AvailabilityResult('closed', $date, null, $party);
+        }
+        if ($date < now()->toDateString()) {
+            return new AvailabilityResult('invalid', $date, null, $party, [], $cfgNew['auto_confirm_max']);
+        }
+
+        $oldDate  = $this->dateStr($r->reserved_date);
+        $cfgOld   = $this->availability->configFor($oldDate) ?? $cfgNew;
+        $oldSnap  = SlotCalculator::snapToGrid(substr((string) $r->reserved_time, 0, 5), $cfgOld['slot_minutes']);
+        $oldSpan  = SlotCalculator::spannedSlots($oldSnap, $cfgOld['turn_minutes'], $cfgOld['slot_minutes']);
+        $oldParty = (int) $r->party_size;
+        $sameDate = $date === $oldDate;
+
+        $newSnap  = SlotCalculator::snapToGrid($time, $cfgNew['slot_minutes']);
+        $newSpan  = SlotCalculator::spannedSlots($newSnap, $cfgNew['turn_minutes'], $cfgNew['slot_minutes']);
+
+        $occ = $this->availability->occupancy($date, $newSpan);
+        if ($sameDate) {
+            $occ = self::discountOwn($occ, $oldSpan, $oldParty);
+        }
+
+        $result = AvailabilityService::decide($cfgNew, $occ, $party, $newSnap, $date);
+
+        if (in_array($result->status, ['full', 'outside_hours'], true)) {
+            $day = $this->availability->dayOccupancy($date);
+            if ($sameDate) {
+                $day = self::discountOwn($day, $oldSpan, $oldParty);
+            }
+            $alts = AvailabilityService::suggest($cfgNew, $day, $party, $result->time);
+            return new AvailabilityResult($result->status, $date, $result->time, $party, $alts, $cfgNew['auto_confirm_max']);
+        }
+
+        return $result;
+    }
+
+    /**
+     * PURE: subtract a reservation's own covers from an occupancy map for the
+     * slots it occupies (used by modify math). Unit-tested.
+     *
+     * @param array<string,int> $occ
+     * @param string[] $ownSpan
+     * @return array<string,int>
+     */
+    public static function discountOwn(array $occ, array $ownSpan, int $ownParty): array
+    {
+        foreach ($ownSpan as $s) {
+            if (isset($occ[$s])) {
+                $occ[$s] = max(0, $occ[$s] - $ownParty);
+            }
+        }
+        return $occ;
+    }
+
+    // --------------------------------------------------------------- release
+
     public function release(Reservation $reservation): void
     {
-        $date = $reservation->reserved_date instanceof Carbon
-            ? $reservation->reserved_date->toDateString()
-            : (string) $reservation->reserved_date;
-
-        $cfg = $this->availability->configFor($date);
+        $date = $this->dateStr($reservation->reserved_date);
+        $cfg  = $this->availability->configFor($date);
         if (! $cfg) {
             return;
         }
@@ -124,22 +239,15 @@ class BookingService
         $party   = (int) $reservation->party_size;
 
         DB::transaction(function () use ($date, $spanned, $party) {
-            $locked = SlotOccupancy::where('reserved_date', $date)
-                ->whereIn('slot_start', $spanned)
-                ->lockForUpdate()
-                ->get();
-
-            foreach ($locked as $row) {
+            foreach ($this->lock($date, $spanned) as $row) {
                 $row->covers = max(0, (int) $row->covers - $party);
                 $row->save();
             }
         });
     }
 
-    /**
-     * Advisory availability with a past-time guard (today's earlier slots are
-     * excluded; a wholly past date is invalid).
-     */
+    // ----------------------------------------------------------------- check
+
     public function check(string $date, string $time, int $party): AvailabilityResult
     {
         $cfg = $this->availability->configFor($date);
@@ -154,17 +262,47 @@ class BookingService
 
         $result = $this->availability->check($date, $time, $party);
 
-        // On today's date, downgrade a past start to outside_hours and only
-        // suggest future slots.
-        if ($date === $today && $result->time) {
+        if ($date === $today && $result->time && $result->status === 'available') {
             $nowHhmm = now()->format('H:i');
-            if (SlotCalculator::timeToMinutes($result->time) < SlotCalculator::timeToMinutes($nowHhmm)
-                && $result->status === 'available') {
+            if (SlotCalculator::timeToMinutes($result->time) < SlotCalculator::timeToMinutes($nowHhmm)) {
                 $alts = AvailabilityService::suggest($cfg, $this->availability->dayOccupancy($date), $party, $result->time, $nowHhmm);
                 return new AvailabilityResult('outside_hours', $date, $result->time, $party, $alts, $cfg['auto_confirm_max']);
             }
         }
 
         return $result;
+    }
+
+    // --------------------------------------------------------------- helpers
+
+    private function ensureRows(string $date, array $slots): void
+    {
+        $now  = now();
+        $rows = array_map(fn ($slot) => [
+            'reserved_date' => $date,
+            'slot_start'    => $slot,
+            'covers'        => 0,
+            'created_at'    => $now,
+            'updated_at'    => $now,
+        ], $slots);
+        DB::table('slot_occupancy')->insertOrIgnore($rows);
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<string,SlotOccupancy> keyed by 'H:i'
+     */
+    private function lock(string $date, array $slots)
+    {
+        return SlotOccupancy::where('reserved_date', $date)
+            ->whereIn('slot_start', $slots)
+            ->orderBy('slot_start')
+            ->lockForUpdate()
+            ->get()
+            ->keyBy(fn ($r) => substr((string) $r->slot_start, 0, 5));
+    }
+
+    private function dateStr($date): string
+    {
+        return $date instanceof Carbon ? $date->toDateString() : (string) $date;
     }
 }
