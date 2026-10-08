@@ -10,6 +10,7 @@ use App\Services\AI\TranscriptionService;
 use App\Services\Bot\ConversationEngine;
 use App\Services\Bot\InboundRouter;
 use App\Services\Bot\Replies;
+use App\Services\Reminders\ReminderReplyHandler;
 use App\Services\WhatsApp\ConversationResolver;
 use App\Services\WhatsApp\InboundParser;
 use App\Services\WhatsApp\WhatsAppClient;
@@ -19,12 +20,11 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Processes an inbound webhook payload after the HTTP response is sent to Meta.
- * (T7) Adds voice-note transcription: audio is downloaded + transcribed, and
- * the transcript flows into the same ConversationEngine as typed text. Non-text
- * we can't use (stickers, locations, failed audio) gets a polite "please type".
+ * Inbound processing after the webhook response is flushed.
+ * (T9) Adds reminder-reply handling: a one-word CONFIRMO / CANCELO on an idle
+ * conversation is handled deterministically (no LLM) before the engine runs.
  *
- * Replaces the T4 ProcessInboundMessage.
+ * Replaces the T7 ProcessInboundMessage.
  */
 class ProcessInboundMessage
 {
@@ -37,6 +37,7 @@ class ProcessInboundMessage
         WhatsAppClient $wa,
         ConversationEngine $engine,
         TranscriptionService $transcription,
+        ReminderReplyHandler $reminderReply,
     ): void {
         $parsed = InboundParser::parse($this->payload);
 
@@ -61,13 +62,13 @@ class ProcessInboundMessage
             $conversation = $contact->conversation;
 
             if ($conversation && $conversation->state === Conversation::STATE_HUMAN) {
-                continue; // handed to a human; logged, bot silent
+                continue;
             }
             if (! Setting::get('bot_enabled', true)) {
                 continue;
             }
 
-            $reply = $this->buildReply($engine, $transcription, $inbound, $contact, $msg);
+            $reply = $this->buildReply($engine, $transcription, $reminderReply, $inbound, $contact, $msg);
 
             if ($reply !== null && $reply !== '') {
                 $wamid = $wa->sendText($contact->wa_id, $reply);
@@ -79,13 +80,13 @@ class ProcessInboundMessage
     private function buildReply(
         ConversationEngine $engine,
         TranscriptionService $transcription,
+        ReminderReplyHandler $reminderReply,
         Message $inbound,
         Contact $contact,
         array $msg,
     ): ?string {
         $lang = $contact->locale ?: 'es';
 
-        // Transcribe voice notes first.
         $transcript = null;
         if ($msg['type'] === 'audio' && ! empty($msg['media_id'])) {
             $transcript = $transcription->transcribe($msg['media_id']);
@@ -100,10 +101,17 @@ class ProcessInboundMessage
             return Replies::pleaseType($lang, audio: false);
         }
 
-        // engine mode: persist the usable text (transcript) onto the log row so
-        // the panel + history show what was said, then run the engine.
         if ($transcript && $inbound->exists && $inbound->body !== $transcript) {
             $inbound->update(['body' => $transcript]);
+        }
+
+        // Reminder reply fast-path (idle only) — CONFIRMO / CANCELO.
+        $state = $contact->conversation?->state ?? Conversation::STATE_IDLE;
+        if ($state === Conversation::STATE_IDLE) {
+            $handled = $reminderReply->maybeHandle($contact, $decision['text'], $lang);
+            if ($handled !== null) {
+                return $handled;
+            }
         }
 
         $history = Message::where('contact_id', $contact->id)
