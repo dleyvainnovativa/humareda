@@ -113,7 +113,10 @@
 
 @push('scripts')
 <script>
-(function () {
+// Run after the deferred Vite module (app.js) has executed and defined
+// window.HP. A plain IIFE here runs during parse — before app.js — so HP
+// would be undefined. DOMContentLoaded fires after deferred modules run.
+document.addEventListener('DOMContentLoaded', function () {
     const storeUrl = @json(route('knowledge.store'));
     const base     = @json(url('knowledge'));
     const modalEl  = document.getElementById('hp-modal');
@@ -171,6 +174,6 @@
             try { await HP.http.delete(`${base}/${b.dataset.id}`); HP.toast('Eliminada.', 'success'); location.reload(); }
             catch (e) { HP.toast('Error.', 'error'); }
         }));
-})();
+});
 </script>
 @endpush

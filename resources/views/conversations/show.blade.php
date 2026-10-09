@@ -59,7 +59,10 @@
 
 @push('scripts')
 <script>
-(function () {
+// Run after the deferred Vite module (app.js) has executed and defined
+// window.HP. A plain IIFE here runs during parse — before app.js — so HP
+// would be undefined. DOMContentLoaded fires after deferred modules run.
+document.addEventListener('DOMContentLoaded', function () {
     const contactId = @json($contact->id);
     const urls = {
         poll:       @json(route('conversations.poll', $contact)),
@@ -124,6 +127,6 @@
     document.getElementById('hp-return').addEventListener('click', async () => {
         try { await HP.http.post(urls.returnBot, {}); setState('idle'); HP.toast('Devuelta al bot.', 'success'); } catch (e) { HP.toast('Error.', 'error'); }
     });
-})();
+});
 </script>
 @endpush
