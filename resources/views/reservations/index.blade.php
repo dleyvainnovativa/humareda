@@ -25,7 +25,7 @@
 <div class="hp-card"><div class="hp-card-body">
     @if ($reservations->isEmpty())
         <p class="text-secondary small text-center py-4 mb-0">
-            {{ $status==='pending' ? 'Nada por autorizar. 👌' : 'Sin reservaciones.' }}
+            @if ($status === 'pending')<i class="fa-solid fa-circle-check me-1 text-success"></i>Nada por autorizar.@else Sin reservaciones.@endif
         </p>
     @elseif ($status === 'pending')
         {{-- Authorization queue --}}

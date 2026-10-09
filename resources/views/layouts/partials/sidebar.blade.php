@@ -1,23 +1,23 @@
 @php($nav = [
-    ['route' => 'dashboard',           'label' => 'Panel',          'icon' => 'fa-gauge-high'],
-    ['route' => 'reservations.index',  'label' => 'Reservaciones',  'icon' => 'fa-calendar-check'],
-    ['route' => 'conversations.index', 'label' => 'Conversaciones', 'icon' => 'fa-comments'],
-    ['route' => 'knowledge.index',     'label' => 'Conocimiento',   'icon' => 'fa-book-open'],
-    ['route' => 'settings.edit',       'label' => 'Ajustes',        'icon' => 'fa-sliders'],
+['route' => 'dashboard', 'label' => 'Panel', 'icon' => 'fa-gauge-high'],
+['route' => 'reservations.index', 'label' => 'Reservaciones', 'icon' => 'fa-calendar-check'],
+['route' => 'conversations.index', 'label' => 'Conversaciones', 'icon' => 'fa-comments'],
+['route' => 'knowledge.index', 'label' => 'Conocimiento', 'icon' => 'fa-book-open'],
+['route' => 'settings.edit', 'label' => 'Ajustes', 'icon' => 'fa-sliders'],
 ])
 
 <aside class="hp-sidebar" id="hp-sidebar">
     <div class="hp-brand">
-        <span class="hp-brand-mark"><i class="fa-solid fa-fire"></i></span>
+        <img class="hp-brand-logo" src="{{ asset('img/icon.png') }}" alt="" aria-hidden="true">
         Humareda Prime
     </div>
 
     <nav class="hp-nav">
         @foreach ($nav as $item)
-            <a href="{{ route($item['route']) }}"
-               class="{{ request()->routeIs(\Illuminate\Support\Str::before($item['route'], '.').'*') || request()->routeIs($item['route']) ? 'active' : '' }}">
-                <i class="fa-solid {{ $item['icon'] }}"></i> {{ $item['label'] }}
-            </a>
+        <a href="{{ route($item['route']) }}"
+            class="{{ request()->routeIs(\Illuminate\Support\Str::before($item['route'], '.').'*') || request()->routeIs($item['route']) ? 'active' : '' }}">
+            <i class="fa-solid {{ $item['icon'] }}"></i> {{ $item['label'] }}
+        </a>
         @endforeach
     </nav>
 

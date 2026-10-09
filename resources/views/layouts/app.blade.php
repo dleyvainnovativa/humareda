@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="es" data-bs-theme="light">
+
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -8,12 +9,18 @@
 
     {{-- Apply saved theme before paint to avoid a flash --}}
     <script>
-        (function () {
+        (function() {
             var m = document.cookie.match(/(?:^|; )hp-theme=([^;]+)/);
             var t = m ? m[1] : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
             document.documentElement.setAttribute('data-bs-theme', t);
         })();
     </script>
+
+    {{-- Favicons --}}
+    <link rel="icon" href="{{ asset('favicon.ico') }}" sizes="any">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ asset('img/favicon-32.png') }}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ asset('img/favicon-16.png') }}">
+    <link rel="apple-touch-icon" href="{{ asset('img/apple-touch-icon.png') }}">
 
     {{-- Fonts --}}
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -27,6 +34,7 @@
     @vite(['resources/css/theme.css', 'resources/js/app.js'])
     @stack('head')
 </head>
+
 <body>
     <div class="hp-app">
         @include('layouts.partials.sidebar')
@@ -42,4 +50,5 @@
     <div class="hp-toast-wrap"></div>
     @stack('scripts')
 </body>
+
 </html>

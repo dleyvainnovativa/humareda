@@ -53,6 +53,12 @@
     --hp-sidebar:    #1c1917;   /* warm near-black */
     --hp-sidebar-tx: #d7d3d0;
     --hp-primary:    var(--hp-ember);
+
+    /* Conversation bubbles */
+    --hp-bot-bg:     rgba(194,65,12,.08);
+    --hp-bot-border: rgba(194,65,12,.20);
+    --hp-agent-bg:   #c2410c;
+    --hp-on-agent:   #ffffff;
 }
 
 /* Dark theme surface tokens */
@@ -66,6 +72,12 @@
     --hp-sidebar:    #161413;
     --hp-sidebar-tx: #c9c4bf;
     --hp-primary:    #f97316;   /* brighter ember for contrast on dark */
+
+    /* Conversation bubbles */
+    --hp-bot-bg:     rgba(249,115,22,.13);
+    --hp-bot-border: rgba(249,115,22,.28);
+    --hp-agent-bg:   #c2410c;
+    --hp-on-agent:   #ffffff;
 }
 
 /* ---- Base --------------------------------------------------------------- */
@@ -110,6 +122,7 @@ a:hover { text-decoration: underline; }
     background: linear-gradient(135deg, var(--hp-ember), var(--hp-gold));
     display: grid; place-items: center; color: #fff; font-size: .95rem;
 }
+.hp-brand .hp-brand-logo { width: 32px; height: 32px; flex: none; }
 
 .hp-nav { display: flex; flex-direction: column; gap: 2px; }
 .hp-nav a {
@@ -208,9 +221,59 @@ a:hover { text-decoration: underline; }
 @keyframes hp-spin { to { transform: rotate(360deg); } }
 .is-loading { pointer-events: none; opacity: .65; }
 
-/* ---- Auth screen -------------------------------------------------------- */
+/* ---- Auth screen (split) ------------------------------------------------ */
 .hp-auth { min-height: 100vh; display: grid; place-items: center; padding: 1.5rem; background: var(--hp-bg); }
-.hp-auth-card { width: 100%; max-width: 400px; }
+.hp-auth-shell {
+    width: 100%; max-width: 1000px; display: flex; min-height: 580px;
+    background: var(--hp-surface); border: 1px solid var(--hp-border);
+    border-radius: 18px; overflow: hidden; box-shadow: var(--hp-shadow-lg);
+}
+
+/* Brand panel — committed dark, regardless of the active theme. */
+.hp-auth-brand {
+    flex: 0 0 46%; position: relative; overflow: hidden; color: #f4efe9;
+    padding: 2.6rem 2.2rem; display: flex; flex-direction: column; justify-content: center; gap: 1.6rem;
+    background:
+        radial-gradient(120% 90% at 18% 12%, rgba(194,65,12,.42), transparent 55%),
+        radial-gradient(90% 80% at 95% 100%, rgba(180,83,9,.30), transparent 55%),
+        #141210;
+}
+.hp-auth-flame { position: absolute; right: -40px; bottom: -40px; width: 300px; height: 300px; opacity: .06; pointer-events: none; z-index: 0; }
+.hp-auth-wm  { width: min(300px, 78%); height: auto; position: relative; z-index: 1; }
+.hp-auth-tag { font-size: 1.05rem; line-height: 1.5; font-weight: 500; max-width: 34ch; margin: 0; position: relative; z-index: 1; color: #efe7df; }
+.hp-auth-brand ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .7rem; position: relative; z-index: 1; }
+.hp-auth-brand li { display: flex; align-items: center; gap: .7rem; font-size: .9rem; color: #d8cfc7; }
+.hp-auth-brand li i { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 8px; background: rgba(255,255,255,.08); color: #f59e5b; font-size: .85rem; }
+
+/* Form panel — follows the active theme. */
+.hp-auth-form  { flex: 1; min-width: 0; background: var(--hp-surface); display: flex; align-items: center; justify-content: center; padding: 2.4rem 1.6rem; }
+.hp-auth-inner { width: 100%; max-width: 340px; }
+.hp-auth-mark  { width: 54px; height: 54px; margin-bottom: 1rem; }
+.hp-auth-inner h1 { font-size: 1.4rem; font-weight: 700; margin: 0 0 .25rem; letter-spacing: -.02em; }
+.hp-auth-sub { color: var(--hp-text-muted); font-size: .9rem; margin: 0 0 1.5rem; }
+.hp-auth-field { margin-bottom: 1rem; }
+.hp-auth-field label { display: block; font-size: .78rem; font-weight: 500; margin-bottom: .35rem; }
+.hp-auth-field input {
+    width: 100%; font: inherit; font-size: .92rem; color: var(--hp-text); background: var(--hp-surface-2);
+    border: 1px solid var(--hp-border); border-radius: 9px; padding: .62rem .8rem; outline: none;
+    transition: border-color .15s var(--hp-ease), box-shadow .15s var(--hp-ease);
+}
+.hp-auth-field input:focus { border-color: var(--hp-primary); box-shadow: 0 0 0 3px rgba(194,65,12,.14); }
+.hp-auth-sep { display: flex; align-items: center; gap: .6rem; color: var(--hp-text-muted); font-size: .8rem; margin: 1.1rem 0; }
+.hp-auth-sep::before, .hp-auth-sep::after { content: ""; height: 1px; background: var(--hp-border); flex: 1; }
+.hp-auth-foot { text-align: center; font-size: .72rem; color: var(--hp-text-muted); margin-top: 1.4rem; }
+
+@media (max-width: 760px) {
+    .hp-auth { padding: 0; place-items: stretch; }
+    .hp-auth-shell { flex-direction: column; min-height: 100vh; max-width: none; border: 0; border-radius: 0; box-shadow: none; }
+    .hp-auth-brand { flex: none; padding: 1.8rem 1.4rem; gap: 1rem; align-items: center; text-align: center; }
+    .hp-auth-wm { width: min(240px, 70%); }
+    .hp-auth-brand ul { display: none; }
+    .hp-auth-flame { width: 200px; right: -30px; bottom: -30px; }
+    .hp-auth-form { padding: 1.8rem 1.4rem; }
+    /* .hp-auth-mark { display: none; } */
+    .hp-auth-brand { display: none; }
+}
 
 /* ---- Focus visibility (WCAG AA) ---------------------------------------- */
 :focus-visible { outline: 2px solid var(--hp-primary); outline-offset: 2px; }
@@ -232,3 +295,57 @@ a:hover { text-decoration: underline; }
 @media (prefers-reduced-motion: reduce) {
     * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
 }
+
+/* ---- Conversation thread ------------------------------------------------ */
+.hp-thread { display: flex; flex-direction: column; gap: 12px; max-width: 720px; margin: 0 auto; }
+
+.hp-day {
+    align-self: center; font-size: .7rem; font-weight: 600; color: var(--hp-text-muted);
+    background: var(--hp-surface-2); border: 1px solid var(--hp-border);
+    padding: .18rem .6rem; border-radius: 999px;
+}
+
+/* One row per message; consecutive messages from the same sender get .is-cont,
+   which hides the repeated label and tightens the gap into a visual group. */
+.hp-row { display: flex; flex-direction: column; max-width: 100%; }
+.hp-row.hp-in  { align-items: flex-start; }
+.hp-row.hp-out { align-items: flex-end; }
+.hp-row.is-cont { margin-top: -9px; }
+
+.hp-lbl {
+    font-size: .66rem; font-weight: 600; letter-spacing: .03em; text-transform: uppercase;
+    color: var(--hp-text-muted); margin: 0 .35rem 1px;
+    display: inline-flex; align-items: center; gap: .35rem;
+}
+.hp-row.is-cont .hp-lbl { display: none; }
+.hp-lbl i { font-size: .62rem; color: var(--hp-primary); }
+
+.hp-bubble {
+    width: fit-content; max-width: 72%;
+    padding: .45rem .7rem .4rem; border-radius: 14px;
+    font-size: .875rem; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere;
+    box-shadow: var(--hp-shadow-sm);
+}
+.hp-row.hp-in:not(.is-cont)  .hp-bubble { border-top-left-radius: 5px; }
+.hp-row.hp-out:not(.is-cont) .hp-bubble { border-top-right-radius: 5px; }
+
+.hp-in    .hp-bubble { background: var(--hp-surface-2); border: 1px solid var(--hp-border); color: var(--hp-text); }
+.is-bot   .hp-bubble { background: var(--hp-bot-bg);    border: 1px solid var(--hp-bot-border); color: var(--hp-text); }
+.is-agent .hp-bubble { background: var(--hp-agent-bg);  border: 1px solid var(--hp-agent-bg);   color: var(--hp-on-agent); }
+
+.hp-t { font-size: .64rem; opacity: .6; margin-left: .5rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.is-agent .hp-bubble .hp-t { opacity: .8; }
+.hp-bubble .hp-tag { font-style: italic; opacity: .7; margin-right: .25rem; }
+
+/* Composer — rounded input + circular send */
+.hp-composer { max-width: 720px; margin: .75rem auto 0; }
+.hp-composer-row { display: flex; gap: .5rem; align-items: center; }
+.hp-composer .form-control { border-radius: 999px; }
+.hp-send {
+    width: 42px; height: 42px; flex: none; border: 0; border-radius: 50%;
+    background: var(--hp-primary); color: #fff; cursor: pointer;
+    display: grid; place-items: center; font-size: .95rem;
+    transition: filter .15s var(--hp-ease);
+}
+.hp-send:hover { filter: brightness(1.06); }
+.hp-send:disabled { opacity: .6; cursor: default; }

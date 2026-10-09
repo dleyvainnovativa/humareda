@@ -1,18 +1,6 @@
 @extends('layouts.app')
 @section('title', 'Conversación')
 
-@push('head')
-<style>
-    .hp-thread { display:flex; flex-direction:column; gap:.5rem; max-width:760px; margin:0 auto; }
-    .hp-bubble { max-width:78%; padding:.55rem .8rem; border-radius:12px; font-size:.9rem; line-height:1.35; white-space:pre-wrap; }
-    .hp-bubble .hp-meta { font-size:.68rem; opacity:.6; margin-top:.25rem; }
-    .hp-in  { align-self:flex-start; background:var(--hp-surface-2); border:1px solid var(--hp-border); border-bottom-left-radius:3px; }
-    .hp-out { align-self:flex-end; background:rgba(194,65,12,.10); border:1px solid rgba(194,65,12,.25); border-bottom-right-radius:3px; }
-    .hp-out.is-bot { background:var(--hp-surface-2); border-color:var(--hp-border); }
-    .hp-composer { max-width:760px; margin:.75rem auto 0; }
-</style>
-@endpush
-
 @section('content')
 @php($state = $contact->conversation?->state ?? 'idle')
 <div class="d-flex align-items-center gap-2 mb-3">
@@ -22,7 +10,8 @@
         <div class="text-secondary small hp-mono">{{ $contact->wa_id }}</div>
     </div>
     <span id="hp-state" class="ms-auto hp-pill {{ $state === 'human' ? 'is-human' : 'is-confirmed' }}">
-        {{ $state === 'human' ? 'Con agente' : 'Bot' }}
+        <i class="fa-solid {{ $state === 'human' ? 'fa-headset' : 'fa-robot' }}" data-state-icon></i>
+        <span data-state-text>{{ $state === 'human' ? 'Con agente' : 'Bot' }}</span>
     </span>
     <button id="hp-takeover" class="btn btn-sm btn-outline-secondary {{ $state === 'human' ? 'd-none' : '' }}">
         <i class="fa-solid fa-hand me-1"></i>Tomar
@@ -35,23 +24,36 @@
 <div class="hp-card">
     <div class="hp-card-body">
         <div class="hp-thread" id="hp-thread">
+            @php($prevKey = null)
+            @php($prevDay = null)
             @foreach ($messages as $m)
-                <div class="hp-bubble {{ $m->direction === 'in' ? 'hp-in' : 'hp-out '.($m->sender === 'bot' ? 'is-bot' : '') }}">
-                    @if ($m->type !== 'text')<em class="text-secondary">[{{ $m->type }}]</em> @endif
-                    {{ $m->body }}
-                    <div class="hp-meta">
-                        {{ $m->direction === 'in' ? 'Cliente' : ($m->sender === 'bot' ? 'Bot' : $m->sender) }} · {{ $m->created_at?->format('d M H:i') }}
+                @php($key = $m->direction === 'in' ? 'client' : ($m->sender === 'bot' ? 'bot' : 'agent'))
+                @php($side = $m->direction === 'in' ? 'in' : 'out')
+                @php($day = $m->created_at ? ($m->created_at->isToday() ? 'Hoy' : ($m->created_at->isYesterday() ? 'Ayer' : $m->created_at->format('d M'))) : '')
+                @if ($day && $day !== $prevDay)
+                    <div class="hp-day">{{ $day }}</div>
+                    @php($prevKey = null)
+                @endif
+                <div class="hp-row hp-{{ $side }} {{ $key === 'bot' ? 'is-bot' : ($key === 'agent' ? 'is-agent' : '') }} {{ $key === $prevKey ? 'is-cont' : '' }}">
+                    <div class="hp-lbl">
+                        @if ($key === 'client'){{ $contact->name ?? 'Cliente' }}
+                        @elseif ($key === 'bot')<i class="fa-solid fa-robot"></i> Bot
+                        @else<i class="fa-solid fa-headset"></i> {{ \Illuminate\Support\Str::before($m->sender, '@') ?: 'Agente' }}
+                        @endif
                     </div>
+                    <div class="hp-bubble">@if ($m->type !== 'text')<span class="hp-tag">[{{ $m->type }}]</span>@endif{{ $m->body }}<span class="hp-t">{{ $m->created_at?->format('H:i') }}</span></div>
                 </div>
+                @php($prevKey = $key)
+                @php($prevDay = $day)
             @endforeach
         </div>
     </div>
 </div>
 
 <form class="hp-composer" id="hp-composer">
-    <div class="input-group">
+    <div class="hp-composer-row">
         <input type="text" class="form-control" id="hp-reply" placeholder="Escribe una respuesta…" autocomplete="off" maxlength="4000">
-        <button class="btn btn-primary" type="submit"><i class="fa-solid fa-paper-plane"></i></button>
+        <button class="hp-send" type="submit" aria-label="Enviar"><i class="fa-solid fa-paper-plane"></i></button>
     </div>
     <div class="form-text" id="hp-hint">Respondes como agente; la conversación pasa a modo manual.</div>
 </form>
@@ -63,7 +65,7 @@
 // window.HP. A plain IIFE here runs during parse — before app.js — so HP
 // would be undefined. DOMContentLoaded fires after deferred modules run.
 document.addEventListener('DOMContentLoaded', function () {
-    const contactId = @json($contact->id);
+    const contactName = @json($contact->name ?? 'Cliente');
     const urls = {
         poll:       @json(route('conversations.poll', $contact)),
         reply:      @json(route('conversations.reply', $contact)),
@@ -74,23 +76,53 @@ document.addEventListener('DOMContentLoaded', function () {
     const statePill = document.getElementById('hp-state');
     let lastId = {{ $messages->last()->id ?? 0 }};
 
+    // Grouping state, seeded from the last server-rendered message so the first
+    // polled bubble continues (or breaks) the group correctly.
+    @php($lastMsg = $messages->last())
+    let lastKey = @json($lastMsg ? ($lastMsg->direction === 'in' ? 'client' : ($lastMsg->sender === 'bot' ? 'bot' : 'agent')) : null);
+    let lastDay = @json($lastMsg && $lastMsg->created_at ? ($lastMsg->created_at->isToday() ? 'Hoy' : ($lastMsg->created_at->isYesterday() ? 'Ayer' : $lastMsg->created_at->format('d M'))) : null);
+
     const esc = (s) => (s ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
     const atBottom = () => (window.innerHeight + window.scrollY) >= (document.body.offsetHeight - 120);
+    const keyFor = (m) => m.direction === 'in' ? 'client' : (m.sender === 'bot' ? 'bot' : 'agent');
 
     function addBubble(m) {
-        const div = document.createElement('div');
-        const bot = m.sender === 'bot';
-        div.className = 'hp-bubble ' + (m.direction === 'in' ? 'hp-in' : 'hp-out ' + (bot ? 'is-bot' : ''));
-        const who = m.direction === 'in' ? 'Cliente' : (bot ? 'Bot' : m.sender);
-        const tag = m.type && m.type !== 'text' ? `<em class="text-secondary">[${esc(m.type)}]</em> ` : '';
-        div.innerHTML = `${tag}${esc(m.body)}<div class="hp-meta">${esc(who)} · ${esc(m.at)}</div>`;
-        thread.appendChild(div);
+        const key  = keyFor(m);
+        const side = m.direction === 'in' ? 'in' : 'out';
+        const day  = m.day || '';
+
+        if (day && day !== lastDay) {
+            const chip = document.createElement('div');
+            chip.className = 'hp-day';
+            chip.textContent = day;
+            thread.appendChild(chip);
+            lastDay = day;
+            lastKey = null; // a day break always starts a fresh group
+        }
+
+        const cont = key === lastKey;
+        const row = document.createElement('div');
+        row.className = 'hp-row hp-' + side
+            + (key === 'bot' ? ' is-bot' : key === 'agent' ? ' is-agent' : '')
+            + (cont ? ' is-cont' : '');
+
+        let label;
+        if (key === 'client')    label = esc(contactName);
+        else if (key === 'bot')  label = '<i class="fa-solid fa-robot"></i> Bot';
+        else                     label = '<i class="fa-solid fa-headset"></i> ' + esc((m.sender || '').split('@')[0] || 'Agente');
+
+        const tag  = m.type && m.type !== 'text' ? `<span class="hp-tag">[${esc(m.type)}]</span>` : '';
+        const time = esc(m.time || m.at || '');
+        row.innerHTML = `<div class="hp-lbl">${label}</div><div class="hp-bubble">${tag}${esc(m.body)}<span class="hp-t">${time}</span></div>`;
+        thread.appendChild(row);
+        lastKey = key;
     }
 
     function setState(state) {
         const human = state === 'human';
-        statePill.textContent = human ? 'Con agente' : 'Bot';
         statePill.className = 'ms-auto hp-pill ' + (human ? 'is-human' : 'is-confirmed');
+        statePill.querySelector('[data-state-icon]').className = 'fa-solid ' + (human ? 'fa-headset' : 'fa-robot');
+        statePill.querySelector('[data-state-text]').textContent = human ? 'Con agente' : 'Bot';
         document.getElementById('hp-takeover').classList.toggle('d-none', human);
         document.getElementById('hp-return').classList.toggle('d-none', !human);
     }
@@ -105,6 +137,7 @@ document.addEventListener('DOMContentLoaded', function () {
         } catch (e) { /* transient; keep polling */ }
     }
     setInterval(poll, 4000);
+    window.scrollTo(0, document.body.scrollHeight);
 
     document.getElementById('hp-composer').addEventListener('submit', async (e) => {
         e.preventDefault();

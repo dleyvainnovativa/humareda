@@ -27,7 +27,7 @@ class ConversationController extends Controller
         $query = Contact::query()->with('conversation')->withCount('messages');
 
         if ($filter === 'attention') {
-            $query->whereHas('conversation', fn ($q) => $q->where('state', Conversation::STATE_HUMAN));
+            $query->whereHas('conversation', fn($q) => $q->where('state', Conversation::STATE_HUMAN));
         }
 
         $contacts = $query->orderByDesc('last_seen_at')->paginate(25)->withQueryString();
@@ -60,13 +60,15 @@ class ConversationController extends Controller
 
         return response()->json([
             'state'    => $contact->conversation?->state ?? 'idle',
-            'messages' => $messages->map(fn ($m) => [
+            'messages' => $messages->map(fn($m) => [
                 'id'        => $m->id,
                 'direction' => $m->direction,
                 'type'      => $m->type,
                 'body'      => $m->body,
                 'sender'    => $m->sender,
                 'at'        => $m->created_at?->format('d M H:i'),
+                'time'      => $m->created_at?->format('H:i'),
+                'day'       => $this->dayLabel($m),
             ]),
         ]);
     }
@@ -108,10 +110,26 @@ class ConversationController extends Controller
         return response()->json([
             'ok'      => true,
             'message' => [
-                'id' => $message->id, 'direction' => 'out', 'body' => $message->body,
-                'sender' => $message->sender, 'at' => $message->created_at->format('d M H:i'),
+                'id' => $message->id,
+                'direction' => 'out',
+                'body' => $message->body,
+                'sender' => $message->sender,
+                'at' => $message->created_at->format('d M H:i'),
+                'time' => $message->created_at->format('H:i'),
+                'day' => $this->dayLabel($message),
             ],
         ]);
+    }
+
+    /** Human-friendly day bucket for grouping in the thread (Hoy / Ayer / d M). */
+    private function dayLabel(Message $m): string
+    {
+        if (! $m->created_at) {
+            return '';
+        }
+
+        return $m->created_at->isToday() ? 'Hoy'
+            : ($m->created_at->isYesterday() ? 'Ayer' : $m->created_at->format('d M'));
     }
 
     /** Staff grabs a bot-run conversation (no notification). */
