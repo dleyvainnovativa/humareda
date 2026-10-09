@@ -5,6 +5,11 @@
    Fonts: Inter (UI), JetBrains Mono (numbers/code).
    ========================================================================= */
 
+/* ---- Bootstrap 5 base (must load FIRST so our tokens/overrides win) ------
+   Vite resolves this bare specifier from node_modules/bootstrap. Keep it at
+   the very top: everything below intentionally overrides Bootstrap. */
+@import 'bootstrap/dist/css/bootstrap.css';
+
 /* ---- Design tokens ------------------------------------------------------ */
 :root {
     /* Brand — warm ember/copper on charcoal, wine as secondary accent */

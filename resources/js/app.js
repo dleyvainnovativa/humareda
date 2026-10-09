@@ -4,7 +4,12 @@
    window.HP so inline Blade scripts can call helpers without duplication.
    ========================================================================= */
 
-import 'bootstrap';
+// Import Bootstrap's JS as a namespace AND expose it globally. A bare
+// `import 'bootstrap'` only runs side effects (data-api auto-init) but never
+// defines window.bootstrap, so helpers like modal() below — and any inline
+// Blade that calls `bootstrap.Modal` — would throw "bootstrap is not defined".
+import * as bootstrap from 'bootstrap';
+window.bootstrap = bootstrap;
 import './theme-toggle.js';
 
 /* ---- CSRF + fetch core -------------------------------------------------- */

@@ -20,5 +20,13 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         \App\Models\Reservation::observe(\App\Observers\ReservationObserver::class);
+        \Illuminate\Support\Facades\Event::listen(
+            \App\Events\ConversationHandedOff::class,
+            \App\Listeners\NotifyStaffOfHandoff::class
+        );
+        \Illuminate\Support\Facades\Event::listen(
+            \App\Events\ReservationRequested::class,
+            \App\Listeners\NotifyStaffOfRequest::class
+        );
     }
 }
