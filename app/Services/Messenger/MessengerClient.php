@@ -14,8 +14,8 @@ use Illuminate\Support\Facades\Log;
  */
 class MessengerClient implements ChannelClient
 {
-    private string $base;
-    private ?string $token;
+    protected string $base;
+    protected ?string $token;
 
     public function __construct()
     {

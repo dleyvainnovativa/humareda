@@ -6,8 +6,11 @@
 <div class="d-flex align-items-center gap-2 mb-3">
     <a href="{{ route('conversations.index') }}" class="btn btn-icon btn-outline-secondary"><i class="fa-solid fa-arrow-left"></i></a>
     <div>
-        <div class="fw-semibold">{{ $contact->name ?? $contact->wa_id }}</div>
-        <div class="text-secondary small hp-mono">{{ $contact->wa_id }}</div>
+        <div class="fw-semibold">{{ $contact->name ?? $contact->external_id }}</div>
+        <div class="text-secondary small d-inline-flex align-items-center gap-1">
+            <i class="fa-brands {{ $contact->channel->faIcon() }}" title="{{ $contact->channel->label() }}"></i>
+            <span class="hp-mono">{{ $contact->channel === \App\Enums\Channel::WhatsApp ? $contact->wa_id : $contact->channel->label() }}</span>
+        </div>
     </div>
     <span id="hp-state" class="ms-auto hp-pill {{ $state === 'human' ? 'is-human' : 'is-confirmed' }}">
         <i class="fa-solid {{ $state === 'human' ? 'fa-headset' : 'fa-robot' }}" data-state-icon></i>

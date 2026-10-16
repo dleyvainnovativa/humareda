@@ -4,6 +4,7 @@ namespace App\Services\Channels;
 
 use App\Enums\Channel;
 use App\Models\Contact;
+use App\Services\Instagram\InstagramClient;
 use App\Services\Messenger\MessengerClient;
 use App\Services\WhatsApp\WhatsAppClient;
 
@@ -19,8 +20,7 @@ class ChannelManager
         return match ($channel) {
             Channel::WhatsApp  => app(WhatsAppClient::class),
             Channel::Messenger => app(MessengerClient::class),
-            // Channel::Instagram => app(InstagramClient::class),   // Phase C
-            default => throw new \RuntimeException("Channel '{$channel->value}' is not implemented yet."),
+            Channel::Instagram => app(InstagramClient::class),
         };
     }
 

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\Channel;
 use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Message;
@@ -22,7 +23,8 @@ class ConversationController extends Controller
 {
     public function index(Request $request): View
     {
-        $filter = $request->query('filter', 'attention'); // attention | all
+        $filter  = $request->query('filter', 'attention'); // attention | all
+        $channel = $request->query('channel');             // null = all channels
 
         $query = Contact::query()->with('conversation')->withCount('messages');
 
@@ -30,11 +32,17 @@ class ConversationController extends Controller
             $query->whereHas('conversation', fn ($q) => $q->where('state', Conversation::STATE_HUMAN));
         }
 
+        if ($channel && in_array($channel, array_column(Channel::cases(), 'value'), true)) {
+            $query->where('channel', $channel);
+        } else {
+            $channel = null;
+        }
+
         $contacts = $query->orderByDesc('last_seen_at')->paginate(25)->withQueryString();
 
         $attentionCount = Conversation::where('state', Conversation::STATE_HUMAN)->count();
 
-        return view('conversations.index', compact('contacts', 'filter', 'attentionCount'));
+        return view('conversations.index', compact('contacts', 'filter', 'attentionCount', 'channel'));
     }
 
     public function show(Contact $contact): View

@@ -41,7 +41,8 @@ class ProcessInboundMessage
         TranscriptionService $transcription,
         ReminderReplyHandler $reminderReply,
     ): void {
-        $parsed = $this->channel === Channel::Messenger
+        // Messenger and Instagram share the Messenger-Platform envelope.
+        $parsed = in_array($this->channel, [Channel::Messenger, Channel::Instagram], true)
             ? MessengerInboundParser::parse($this->payload)
             : InboundParser::parse($this->payload);
 
