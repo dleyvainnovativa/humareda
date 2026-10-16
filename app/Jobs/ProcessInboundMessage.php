@@ -10,6 +10,7 @@ use App\Services\AI\TranscriptionService;
 use App\Services\Bot\ConversationEngine;
 use App\Services\Bot\InboundRouter;
 use App\Services\Bot\Replies;
+use App\Services\Channels\ChannelManager;
 use App\Services\Reminders\ReminderReplyHandler;
 use App\Services\WhatsApp\ConversationResolver;
 use App\Services\WhatsApp\InboundParser;
@@ -35,6 +36,7 @@ class ProcessInboundMessage
     public function handle(
         ConversationResolver $resolver,
         WhatsAppClient $wa,
+        ChannelManager $channels,
         ConversationEngine $engine,
         TranscriptionService $transcription,
         ReminderReplyHandler $reminderReply,
@@ -71,7 +73,7 @@ class ProcessInboundMessage
             $reply = $this->buildReply($engine, $transcription, $reminderReply, $inbound, $contact, $msg);
 
             if ($reply !== null && $reply !== '') {
-                $wamid = $wa->sendText($contact->wa_id, $reply);
+                $wamid = $channels->forContact($contact)->sendText($contact->external_id, $reply);
                 $this->logOutbound($contact->id, $reply, $wamid);
             }
         }

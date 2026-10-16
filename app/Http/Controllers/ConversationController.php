@@ -5,7 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Message;
-use App\Services\WhatsApp\WhatsAppClient;
+use App\Services\Channels\ChannelManager;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -27,7 +27,7 @@ class ConversationController extends Controller
         $query = Contact::query()->with('conversation')->withCount('messages');
 
         if ($filter === 'attention') {
-            $query->whereHas('conversation', fn($q) => $q->where('state', Conversation::STATE_HUMAN));
+            $query->whereHas('conversation', fn ($q) => $q->where('state', Conversation::STATE_HUMAN));
         }
 
         $contacts = $query->orderByDesc('last_seen_at')->paginate(25)->withQueryString();
@@ -60,7 +60,7 @@ class ConversationController extends Controller
 
         return response()->json([
             'state'    => $contact->conversation?->state ?? 'idle',
-            'messages' => $messages->map(fn($m) => [
+            'messages' => $messages->map(fn ($m) => [
                 'id'        => $m->id,
                 'direction' => $m->direction,
                 'type'      => $m->type,
@@ -78,7 +78,7 @@ class ConversationController extends Controller
      * outside it, WhatsApp will reject free-form text (a template would be
      * needed), so we surface that instead of silently failing.
      */
-    public function reply(Request $request, Contact $contact, WhatsAppClient $wa): JsonResponse
+    public function reply(Request $request, Contact $contact, ChannelManager $channels): JsonResponse
     {
         $data = $request->validate(['body' => ['required', 'string', 'max:4000']]);
 
@@ -92,7 +92,7 @@ class ConversationController extends Controller
             ], 422);
         }
 
-        $wamid = $wa->sendText($contact->wa_id, $data['body']);
+        $wamid = $channels->forContact($contact)->sendText($contact->external_id, $data['body']);
         if (! $wamid) {
             return response()->json(['ok' => false, 'message' => 'No se pudo enviar. Revisa el log.'], 502);
         }
@@ -110,13 +110,9 @@ class ConversationController extends Controller
         return response()->json([
             'ok'      => true,
             'message' => [
-                'id' => $message->id,
-                'direction' => 'out',
-                'body' => $message->body,
-                'sender' => $message->sender,
-                'at' => $message->created_at->format('d M H:i'),
-                'time' => $message->created_at->format('H:i'),
-                'day' => $this->dayLabel($message),
+                'id' => $message->id, 'direction' => 'out', 'body' => $message->body,
+                'sender' => $message->sender, 'at' => $message->created_at->format('d M H:i'),
+                'time' => $message->created_at->format('H:i'), 'day' => $this->dayLabel($message),
             ],
         ]);
     }

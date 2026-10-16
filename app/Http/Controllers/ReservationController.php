@@ -2,11 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Enums\Channel;
 use App\Models\Contact;
 use App\Models\Reservation;
 use App\Services\Reservations\CancellationService;
 use App\Services\Reservations\OccupancyReport;
 use App\Services\Reservations\ReviewService;
+use App\Services\WhatsApp\WhatsAppClient;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -78,9 +80,10 @@ class ReservationController extends Controller
             'notes'             => ['nullable', 'string', 'max:500'],
         ]);
 
+        $waId = WhatsAppClient::normalizeMx($data['phone']);
         $contact = Contact::firstOrCreate(
-            ['wa_id' => preg_replace('/\D/', '', $data['phone'])],
-            ['name' => $data['name']],
+            ['channel' => Channel::WhatsApp->value, 'external_id' => $waId],
+            ['name' => $data['name'], 'wa_id' => $waId],
         );
 
         // Staff create = authorized directly (observer schedules the reminder).

@@ -5,17 +5,18 @@ namespace App\Services\Reservations;
 use App\Models\Message;
 use App\Models\Reservation;
 use App\Services\Bot\Replies;
-use App\Services\WhatsApp\WhatsAppClient;
+use App\Services\Channels\ChannelManager;
 
 /**
  * Staff authorization of pending requests (T11). Approve -> confirmed + guest is
  * told it's confirmed (and the reminder observer schedules). Reject -> rejected
- * + guest is told, politely. Sends the guest message via WhatsApp (free-form;
- * the guest almost always just messaged, so the 24h window is open).
+ * + guest is told, politely. The guest message goes out on the contact's own
+ * channel (T12) — free-form; the guest almost always just messaged, so the 24h
+ * window is open.
  */
 class ReviewService
 {
-    public function __construct(private WhatsAppClient $wa) {}
+    public function __construct(private ChannelManager $channels) {}
 
     public function approve(Reservation $reservation, string $staffEmail): bool
     {
@@ -55,7 +56,7 @@ class ReviewService
         if (! $contact) {
             return;
         }
-        $wamid = $this->wa->sendText($contact->wa_id, $body);
+        $wamid = $this->channels->forContact($contact)->sendText($contact->external_id, $body);
         Message::create([
             'contact_id'    => $contact->id,
             'direction'     => Message::DIR_OUT,

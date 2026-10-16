@@ -2,6 +2,7 @@
 
 namespace App\Services\WhatsApp;
 
+use App\Services\Channels\ChannelClient;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -13,7 +14,7 @@ use Illuminate\Support\Facades\Log;
  * All calls target the configured phone_number_id — in dev this is the
  * TEST number; in production it becomes the live 229 line (T10).
  */
-class WhatsAppClient
+class WhatsAppClient implements ChannelClient
 {
     private string $base;
     private string $token;
@@ -33,6 +34,8 @@ class WhatsAppClient
      */
     public function sendText(string $to, string $body): ?string
     {
+        $to = self::normalizeMx($to);
+
         return $this->post([
             'messaging_product' => 'whatsapp',
             'recipient_type'    => 'individual',
@@ -48,6 +51,8 @@ class WhatsAppClient
      */
     public function sendTemplate(string $to, string $template, string $lang = 'es_MX', array $components = []): ?string
     {
+        $to = self::normalizeMx($to);
+
         $payload = [
             'messaging_product' => 'whatsapp',
             'to'                => $to,
@@ -127,5 +132,32 @@ class WhatsAppClient
             Log::error('WhatsApp send exception', ['error' => $e->getMessage()]);
             return null;
         }
+    }
+
+    /**
+     * Normalize a Mexican recipient to the WhatsApp Cloud API format
+     * 52 + 1 + 10 digits. The "1" after the 52 country code is required for
+     * Mexican mobiles on the API (even though it isn't dialed normally):
+     *   2291645189      -> 5212291645189   (bare 10-digit local mobile)
+     *   522291645189    -> 5212291645189   (52 + 10, missing the mobile 1)
+     *   5212291645189   -> 5212291645189   (already correct)
+     * Non-Mexican or unrecognized shapes are returned as digits only, so a
+     * guest from another country is never rewritten into a bad number.
+     */
+    public static function normalizeMx(string $raw): string
+    {
+        $d = preg_replace('/\D+/', '', $raw) ?? '';
+
+        if (strlen($d) === 13 && str_starts_with($d, '521')) {
+            return $d;
+        }
+        if (strlen($d) === 12 && str_starts_with($d, '52')) {
+            return '521' . substr($d, 2);
+        }
+        if (strlen($d) === 10) {
+            return '521' . $d;
+        }
+
+        return $d;
     }
 }
