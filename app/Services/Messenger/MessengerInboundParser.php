@@ -8,9 +8,9 @@ namespace App\Services\Messenger;
  *   wamid -> message id (mid)   from -> sender PSID
  *   type/body -> text or an attachment type marker
  *
- * Non-text attachments keep their type so the router asks the guest to type
- * (social voicenote transcription is a later enhancement); media_id stays null
- * so the WhatsApp transcription path never fires on a Messenger URL.
+ * Audio attachments carry their URL in media_id so the (channel-aware) transcriber
+ * can fetch and transcribe voice notes; other non-text attachments keep their type
+ * with media_id null, so the router simply asks the guest to type.
  */
 class MessengerInboundParser
 {
@@ -46,12 +46,17 @@ class MessengerInboundParser
 
     private static function normalize(array $event): array
     {
-        $msg  = $event['message'] ?? [];
-        $text = $msg['text'] ?? null;
-        $type = 'text';
+        $msg      = $event['message'] ?? [];
+        $text     = $msg['text'] ?? null;
+        $type     = 'text';
+        $mediaUrl = null;
 
         if (! $text && ! empty($msg['attachments'])) {
-            $type = $msg['attachments'][0]['type'] ?? 'unknown'; // image | audio | video | file
+            $att  = $msg['attachments'][0];
+            $type = $att['type'] ?? 'unknown';               // image | audio | video | file
+            if ($type === 'audio') {
+                $mediaUrl = $att['payload']['url'] ?? null;  // voice note -> transcribed via downloadMedia(url)
+            }
         }
 
         return [
@@ -59,7 +64,7 @@ class MessengerInboundParser
             'from'      => $event['sender']['id'] ?? null,   // PSID
             'type'      => $text ? 'text' : $type,
             'body'      => $text,
-            'media_id'  => null,                             // URL lives in raw; not transcribed yet
+            'media_id'  => $mediaUrl,                         // audio URL for transcription; null otherwise
             'name'      => null,                             // enriched lazily via profileName()
             'timestamp' => isset($event['timestamp']) ? (int) $event['timestamp'] : null,
             'raw'       => $event,

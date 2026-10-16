@@ -104,7 +104,7 @@ class ProcessInboundMessage
 
         $transcript = null;
         if ($msg['type'] === 'audio' && ! empty($msg['media_id'])) {
-            $transcript = $transcription->transcribe($msg['media_id']);
+            $transcript = $transcription->transcribe($msg['media_id'], $this->channel);
         }
 
         $decision = InboundRouter::decide($msg['type'], $msg['body'], $transcript);
