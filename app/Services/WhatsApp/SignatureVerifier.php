@@ -17,14 +17,16 @@ class SignatureVerifier
 {
     public static function verify(?string $header, string $rawBody): bool
     {
-        $secret = (string) config('services.whatsapp.app_secret');
+        // One Meta app hosts WhatsApp + Messenger + Instagram, so one app secret
+        // verifies all three. Falls back to the WhatsApp secret for compatibility.
+        $secret = (string) (config('services.meta.app_secret') ?: config('services.whatsapp.app_secret'));
 
         if ($secret === '') {
             if (app()->environment('local', 'testing')) {
-                Log::warning('WhatsApp signature check skipped: no app_secret set (local/testing).');
+                Log::warning('Meta signature check skipped: no app_secret set (local/testing).');
                 return true;
             }
-            Log::error('WhatsApp signature check failed: app_secret not configured in production.');
+            Log::error('Meta signature check failed: app_secret not configured in production.');
             return false;
         }
 

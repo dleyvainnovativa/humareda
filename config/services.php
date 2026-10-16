@@ -48,6 +48,26 @@ return [
         'reminder_template' => env('WHATSAPP_REMINDER_TEMPLATE', 'reminder_same_day'),
     ],
 
+    // Shared across the Meta Business Messaging products (one app hosts all three).
+    'meta' => [
+        'app_secret'    => env('META_APP_SECRET', env('WHATSAPP_APP_SECRET')),
+        'graph_version' => env('META_GRAPH_VERSION', env('WHATSAPP_GRAPH_VERSION', 'v21.0')),
+    ],
+
+    // Facebook Messenger (Page DM) — T12 Phase B.
+    'messenger' => [
+        'page_id'      => env('MESSENGER_PAGE_ID'),
+        'page_token'   => env('MESSENGER_PAGE_TOKEN'),
+        'verify_token' => env('MESSENGER_VERIFY_TOKEN'),
+    ],
+
+    // Instagram DM (Route A: linked to the Facebook Page, reuses the Page token) — T12 Phase C.
+    'instagram' => [
+        'page_token'   => env('INSTAGRAM_PAGE_TOKEN', env('MESSENGER_PAGE_TOKEN')),
+        'ig_user_id'   => env('INSTAGRAM_USER_ID'),
+        'verify_token' => env('INSTAGRAM_VERIFY_TOKEN', env('MESSENGER_VERIFY_TOKEN')),
+    ],
+
     'firebase' => [
         // Admin SDK credentials are read by kreait/laravel-firebase via FIREBASE_CREDENTIALS.
         'auto_provision' => env('FIREBASE_AUTO_PROVISION', false),

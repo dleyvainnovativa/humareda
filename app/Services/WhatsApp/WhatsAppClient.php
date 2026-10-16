@@ -135,6 +135,15 @@ class WhatsAppClient implements ChannelClient
     }
 
     /**
+     * WhatsApp supplies the guest's profile name in the inbound webhook, so
+     * there's nothing to fetch here.
+     */
+    public function profileName(string $externalId): ?string
+    {
+        return null;
+    }
+
+    /**
      * Normalize a Mexican recipient to the WhatsApp Cloud API format
      * 52 + 1 + 10 digits. The "1" after the 52 country code is required for
      * Mexican mobiles on the API (even though it isn't dialed normally):

@@ -17,4 +17,11 @@ interface ChannelClient
     public function markRead(string $externalMessageId): void;
 
     public function downloadMedia(string $mediaId): ?string;
+
+    /**
+     * Display name for a channel user, or null if unavailable. WhatsApp gets it
+     * from the inbound webhook (returns null here); Messenger/Instagram fetch it
+     * from the Graph API so the unified inbox shows a name, not a raw id.
+     */
+    public function profileName(string $externalId): ?string;
 }

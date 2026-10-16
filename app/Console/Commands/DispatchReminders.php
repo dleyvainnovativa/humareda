@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\Channel;
 use App\Models\Message;
 use App\Models\Reservation;
 use App\Models\ReservationReminder;
@@ -47,6 +48,13 @@ class DispatchReminders extends Command
             }
 
             $contact = $reservation->contact;
+
+            // Reminders are WhatsApp-only (T12): drop any scheduled for a social-channel guest.
+            if (! $contact || $contact->channel !== Channel::WhatsApp || ! $contact->wa_id) {
+                $reminder->update(['status' => ReservationReminder::STATUS_CANCELLED]);
+                continue;
+            }
+
             $lang    = $contact->locale ?: 'es';
             $time    = substr((string) $reservation->reserved_time, 0, 5);
             $party   = (int) $reservation->party_size;

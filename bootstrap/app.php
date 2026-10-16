@@ -25,6 +25,8 @@ return Application::configure(basePath: dirname(__DIR__))
         // The WhatsApp webhook must be exempt from CSRF (Meta can't send a token).
         $middleware->validateCsrfTokens(except: [
             'webhook/whatsapp',
+            'webhook/messenger',
+            'webhook/instagram',
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

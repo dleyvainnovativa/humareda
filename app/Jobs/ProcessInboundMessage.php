@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Enums\Channel;
 use App\Models\Contact;
 use App\Models\Conversation;
 use App\Models\Message;
@@ -11,10 +12,10 @@ use App\Services\Bot\ConversationEngine;
 use App\Services\Bot\InboundRouter;
 use App\Services\Bot\Replies;
 use App\Services\Channels\ChannelManager;
+use App\Services\Messenger\MessengerInboundParser;
 use App\Services\Reminders\ReminderReplyHandler;
 use App\Services\WhatsApp\ConversationResolver;
 use App\Services\WhatsApp\InboundParser;
-use App\Services\WhatsApp\WhatsAppClient;
 use Illuminate\Bus\Queueable;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -31,20 +32,21 @@ class ProcessInboundMessage
 {
     use Dispatchable, Queueable;
 
-    public function __construct(private array $payload) {}
+    public function __construct(private array $payload, private Channel $channel = Channel::WhatsApp) {}
 
     public function handle(
         ConversationResolver $resolver,
-        WhatsAppClient $wa,
         ChannelManager $channels,
         ConversationEngine $engine,
         TranscriptionService $transcription,
         ReminderReplyHandler $reminderReply,
     ): void {
-        $parsed = InboundParser::parse($this->payload);
+        $parsed = $this->channel === Channel::Messenger
+            ? MessengerInboundParser::parse($this->payload)
+            : InboundParser::parse($this->payload);
 
         foreach ($parsed['statuses'] as $status) {
-            Log::debug('WhatsApp status', $status);
+            Log::debug('Inbound status', $status);
         }
 
         foreach ($parsed['messages'] as $msg) {
@@ -58,10 +60,20 @@ class ProcessInboundMessage
                 continue;
             }
 
-            $wa->markRead($msg['wamid']);
+            // Read receipt: WhatsApp marks a message id, Messenger/IG mark the sender thread.
+            $readRef = $this->channel === Channel::WhatsApp ? $msg['wamid'] : $msg['from'];
+            $channels->for($this->channel)->markRead($readRef);
 
             $contact      = $inbound->contact;
             $conversation = $contact->conversation;
+
+            // Fill the display name for channels that don't include it inbound (Messenger/IG).
+            if (! $contact->name) {
+                $name = $channels->for($this->channel)->profileName($contact->external_id);
+                if ($name) {
+                    $contact->update(['name' => $name]);
+                }
+            }
 
             if ($conversation && $conversation->state === Conversation::STATE_HUMAN) {
                 continue;
@@ -142,7 +154,7 @@ class ProcessInboundMessage
             return [$existing->loadMissing('contact.conversation'), false];
         }
 
-        $contact = $resolver->resolve($msg['from'], $msg['name']);
+        $contact = $resolver->resolve($msg['from'], $msg['name'], $this->channel);
 
         try {
             $message = Message::create([
