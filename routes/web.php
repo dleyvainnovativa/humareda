@@ -4,6 +4,7 @@ use App\Http\Controllers\Auth\FirebaseLoginController;
 use App\Http\Controllers\ConversationController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\KnowledgeController;
+use App\Http\Controllers\MenuController;
 use App\Http\Controllers\ReservationController;
 use App\Http\Controllers\SettingsController;
 use Illuminate\Support\Facades\Route;
@@ -47,6 +48,17 @@ Route::middleware('auth')->group(function () {
     Route::put('/knowledge/{entry}', [KnowledgeController::class, 'update'])->name('knowledge.update');
     Route::post('/knowledge/{entry}/toggle', [KnowledgeController::class, 'toggle'])->name('knowledge.toggle');
     Route::delete('/knowledge/{entry}', [KnowledgeController::class, 'destroy'])->name('knowledge.destroy');
+
+    // Menú (T13) — datos estructurados del menú; el bot cotiza desde aquí
+    Route::get('/menu', [MenuController::class, 'index'])->name('menu.index');
+    Route::post('/menu/categories', [MenuController::class, 'storeCategory'])->name('menu.categories.store');
+    Route::put('/menu/categories/{category}', [MenuController::class, 'updateCategory'])->name('menu.categories.update');
+    Route::post('/menu/categories/{category}/toggle', [MenuController::class, 'toggleCategory'])->name('menu.categories.toggle');
+    Route::delete('/menu/categories/{category}', [MenuController::class, 'destroyCategory'])->name('menu.categories.destroy');
+    Route::post('/menu/items', [MenuController::class, 'storeItem'])->name('menu.items.store');
+    Route::put('/menu/items/{item}', [MenuController::class, 'updateItem'])->name('menu.items.update');
+    Route::post('/menu/items/{item}/toggle', [MenuController::class, 'toggleItem'])->name('menu.items.toggle');
+    Route::delete('/menu/items/{item}', [MenuController::class, 'destroyItem'])->name('menu.items.destroy');
 
     // Settings (T10)
     Route::get('/settings', [SettingsController::class, 'edit'])->name('settings.edit');

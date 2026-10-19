@@ -4,6 +4,7 @@ namespace App\Services\AI;
 
 use App\Models\KnowledgeEntry;
 use App\Models\Setting;
+use App\Services\Menu\MenuDigest;
 use Illuminate\Support\Carbon;
 
 /**
@@ -19,6 +20,7 @@ class PromptBuilder
     {
         $name = Setting::get('restaurant_name', 'Humareda Prime');
         $kb   = $this->knowledgeBlock();
+        $menu = (new MenuDigest())->text();
 
         return <<<PROMPT
 Eres el asistente de reservaciones por WhatsApp de {$name}, un steak house premium en Boca del Río, Veracruz (cortes finos a las brasas, vista al mar).
@@ -33,12 +35,15 @@ REGLAS ESTRICTAS:
 - party_size entero. "para 4" => 4. "mi esposa y yo" => 2.
 - reference_contact: un correo electrónico o un número de teléfono que el cliente dé como referencia. Si no lo da, null.
 - Detecta el idioma (es o en) en language.
-- faq_answer SOLO cuando intent=faq: responde EXCLUSIVAMENTE con la BASE DE CONOCIMIENTO de abajo, en el idioma del cliente. Si no está cubierto (incluye alergias/opciones no listadas), devuelve null. Nunca inventes menú, precios ni garantías de alérgenos.
+- faq_answer SOLO cuando intent=faq: responde en el idioma del cliente usando la BASE DE CONOCIMIENTO (horario, ubicación, políticas) y el MENÚ (platillos y precios) de abajo. En los cortes marcados "por peso", aclara que el precio es por 100 g y el total depende del tamaño/peso de la pieza. Si algo no está cubierto (p. ej. alérgenos u opciones no listadas), devuelve null. Nunca inventes platillos, precios ni garantías de alérgenos.
 - Si piden hablar con una persona/agente/humano, intent=talk_to_human.
 - Nunca digas al cliente que su reservación está confirmada; eso lo decide una persona.
 
-BASE DE CONOCIMIENTO (única fuente para faq_answer):
+BASE DE CONOCIMIENTO (horario, ubicación, políticas):
 {$kb}
+
+MENÚ (única fuente para platillos y precios):
+{$menu}
 
 FECHA ACTUAL: {$this->nowLine()}
 PROMPT;
