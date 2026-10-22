@@ -13,6 +13,7 @@ class Contact extends Model
         'channel',
         'external_id',
         'wa_id',
+        'wa_phone_number_id',
         'name',
         'locale',
         'last_seen_at',

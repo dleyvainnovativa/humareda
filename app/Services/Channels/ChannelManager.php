@@ -4,6 +4,7 @@ namespace App\Services\Channels;
 
 use App\Enums\Channel;
 use App\Models\Contact;
+use App\Models\WhatsAppNumber;
 use App\Services\Instagram\InstagramClient;
 use App\Services\Messenger\MessengerClient;
 use App\Services\WhatsApp\WhatsAppClient;
@@ -26,6 +27,27 @@ class ChannelManager
 
     public function forContact(Contact $contact): ChannelClient
     {
+        // WhatsApp: send from the same business number the guest talks to
+        // (Tech Provider / Coexistence). Falls back to the config number.
+        if ($contact->channel === Channel::WhatsApp && $contact->wa_phone_number_id) {
+            $client = app(WhatsAppClient::class);
+            $number = WhatsAppNumber::findActive($contact->wa_phone_number_id);
+
+            return $number ? $client->forNumber($number) : $client;
+        }
+
         return $this->for($contact->channel);
+    }
+
+    /**
+     * The WhatsApp client (typed) bound to a contact's business number — needed
+     * where WhatsApp-only methods like sendTemplate() are used (reminders).
+     */
+    public function whatsapp(Contact $contact): WhatsAppClient
+    {
+        $client = app(WhatsAppClient::class);
+        $number = WhatsAppNumber::findActive($contact->wa_phone_number_id);
+
+        return $number ? $client->forNumber($number) : $client;
     }
 }

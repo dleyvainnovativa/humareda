@@ -6,8 +6,8 @@ use App\Enums\Channel;
 use App\Models\Message;
 use App\Models\Reservation;
 use App\Models\ReservationReminder;
+use App\Services\Channels\ChannelManager;
 use App\Services\Reminders\ReminderMessage;
-use App\Services\WhatsApp\WhatsAppClient;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 
@@ -27,7 +27,7 @@ class DispatchReminders extends Command
     protected $signature = 'reminders:dispatch {--limit=100}';
     protected $description = 'Send due same-day reservation reminders.';
 
-    public function handle(WhatsAppClient $wa): int
+    public function handle(ChannelManager $channels): int
     {
         $due = ReservationReminder::query()
             ->where('status', ReservationReminder::STATUS_PENDING)
@@ -55,6 +55,7 @@ class DispatchReminders extends Command
                 continue;
             }
 
+            $wa      = $channels->whatsapp($contact); // from the contact's own business number
             $lang    = $contact->locale ?: 'es';
             $time    = substr((string) $reservation->reserved_time, 0, 5);
             $party   = (int) $reservation->party_size;

@@ -61,16 +61,16 @@ class ProcessInboundMessage
                 continue;
             }
 
-            // Read receipt: WhatsApp marks a message id, Messenger/IG mark the sender thread.
-            $readRef = $this->channel === Channel::WhatsApp ? $msg['wamid'] : $msg['from'];
-            $channels->for($this->channel)->markRead($readRef);
-
             $contact      = $inbound->contact;
             $conversation = $contact->conversation;
 
+            // Read receipt via the contact's own number client (multi-number / coexistence).
+            $readRef = $this->channel === Channel::WhatsApp ? $msg['wamid'] : $msg['from'];
+            $channels->forContact($contact)->markRead($readRef);
+
             // Fill the display name for channels that don't include it inbound (Messenger/IG).
             if (! $contact->name) {
-                $name = $channels->for($this->channel)->profileName($contact->external_id);
+                $name = $channels->forContact($contact)->profileName($contact->external_id);
                 if ($name) {
                     $contact->update(['name' => $name]);
                 }
@@ -155,7 +155,7 @@ class ProcessInboundMessage
             return [$existing->loadMissing('contact.conversation'), false];
         }
 
-        $contact = $resolver->resolve($msg['from'], $msg['name'], $this->channel);
+        $contact = $resolver->resolve($msg['from'], $msg['name'], $this->channel, $msg['phone_number_id'] ?? null);
 
         try {
             $message = Message::create([

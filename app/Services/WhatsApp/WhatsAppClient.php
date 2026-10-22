@@ -2,6 +2,7 @@
 
 namespace App\Services\WhatsApp;
 
+use App\Models\WhatsAppNumber;
 use App\Services\Channels\ChannelClient;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -26,6 +27,20 @@ class WhatsAppClient implements ChannelClient
         $this->base           = "https://graph.facebook.com/{$version}";
         $this->token          = (string) config('services.whatsapp.token');
         $this->phoneNumberId  = config('services.whatsapp.phone_number_id');
+    }
+
+    /**
+     * Return a client bound to a specific connected number's credentials
+     * (Tech Provider / Coexistence). Falls back to config when no number is
+     * resolved, so the current single/test number keeps working.
+     */
+    public function forNumber(WhatsAppNumber $number): self
+    {
+        $clone = clone $this;
+        $clone->token         = (string) $number->token;
+        $clone->phoneNumberId = $number->phone_number_id;
+
+        return $clone;
     }
 
     /**

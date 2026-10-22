@@ -32,8 +32,12 @@ class InboundParser
                     }
                 }
 
+                // Which of our business numbers this message arrived on (multi-number / coexistence).
+                $pid = $value['metadata']['phone_number_id'] ?? null;
                 foreach ($value['messages'] ?? [] as $m) {
-                    $messages[] = self::normalizeMessage($m, $names);
+                    $nm = self::normalizeMessage($m, $names);
+                    $nm['phone_number_id'] = $pid;
+                    $messages[] = $nm;
                 }
 
                 foreach ($value['statuses'] ?? [] as $s) {
