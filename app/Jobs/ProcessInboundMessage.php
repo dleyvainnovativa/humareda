@@ -97,9 +97,16 @@ class ProcessInboundMessage
             $this->handleEcho($echo);
         }
 
-        // Coexistence sync/status events — surfaced for visibility (history import TBD).
+        // Coexistence sync/status events — log all; history events trigger the backfill.
+        $hasHistory = false;
         foreach ($parsed['events'] ?? [] as $event) {
             Log::info('WhatsApp coexistence event', $event);
+            if (($event['field'] ?? null) === 'history') {
+                $hasHistory = true;
+            }
+        }
+        if ($hasHistory) {
+            app(\App\Services\WhatsApp\HistoryImporter::class)->import($this->payload);
         }
     }
 
