@@ -28,5 +28,15 @@ class AppServiceProvider extends ServiceProvider
             \App\Events\ReservationRequested::class,
             \App\Listeners\NotifyStaffOfRequest::class
         );
+
+        // Push the same two events to the Flutter staff app (T14 Phase 4).
+        \Illuminate\Support\Facades\Event::listen(
+            \App\Events\ConversationHandedOff::class,
+            \App\Listeners\PushStaffOfHandoff::class
+        );
+        \Illuminate\Support\Facades\Event::listen(
+            \App\Events\ReservationRequested::class,
+            \App\Listeners\PushStaffOfRequest::class
+        );
     }
 }

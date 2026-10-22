@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\ConversationApiController;
+use App\Http\Controllers\Api\DeviceTokenController;
 use App\Http\Controllers\Api\MeController;
 use App\Http\Controllers\Api\ReservationApiController;
 use App\Http\Controllers\Webhook\InstagramWebhookController;
@@ -38,6 +39,10 @@ Route::get('/ping', fn () => response()->json(['pong' => true]));
 */
 Route::middleware('firebase')->prefix('app')->group(function () {
     Route::get('/me', [MeController::class, 'me']);
+
+    // FCM push registration
+    Route::post('/device-tokens',   [DeviceTokenController::class, 'store']);
+    Route::delete('/device-tokens', [DeviceTokenController::class, 'destroy']);
 
     Route::get('/conversations',                       [ConversationApiController::class, 'index']);
     Route::get('/conversations/{contact}',             [ConversationApiController::class, 'show']);
