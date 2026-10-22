@@ -9,20 +9,30 @@ namespace App\Services\WhatsApp;
  * contain inbound `messages` and/or delivery `statuses`. We only act on
  * messages; statuses (sent/delivered/read receipts) are returned separately
  * so callers can log or ignore them.
+ *
+ * Coexistence (Tech Provider) adds two more blocks we surface here:
+ *   - `message_echoes`  -> messages the business sent from the WhatsApp app
+ *                          (staff replying by hand). Drives the bot-quiet
+ *                          handoff (field: smb_message_echoes).
+ *   - sync events        -> history / smb_app_state_sync / account_update,
+ *                          surfaced as `events` for logging + future sync.
  */
 class InboundParser
 {
     /**
-     * @return array{messages: array<int, array>, statuses: array<int, array>}
+     * @return array{messages: array<int, array>, statuses: array<int, array>, echoes: array<int, array>, events: array<int, array>}
      */
     public static function parse(array $payload): array
     {
         $messages = [];
         $statuses = [];
+        $echoes   = [];
+        $events   = [];
 
         foreach ($payload['entry'] ?? [] as $entry) {
             foreach ($entry['changes'] ?? [] as $change) {
                 $value = $change['value'] ?? [];
+                $field = $change['field'] ?? null;
 
                 // Map wa_id -> profile name for enrichment.
                 $names = [];
@@ -32,7 +42,7 @@ class InboundParser
                     }
                 }
 
-                // Which of our business numbers this message arrived on (multi-number / coexistence).
+                // Which of our business numbers this event arrived on (multi-number / coexistence).
                 $pid = $value['metadata']['phone_number_id'] ?? null;
                 foreach ($value['messages'] ?? [] as $m) {
                     $nm = self::normalizeMessage($m, $names);
@@ -47,10 +57,23 @@ class InboundParser
                         'recipient' => $s['recipient_id'] ?? null,
                     ];
                 }
+
+                // Coexistence: outbound messages the business sent from the WhatsApp app.
+                foreach ($value['message_echoes'] ?? [] as $e) {
+                    $ne = self::normalizeMessage($e, $names);
+                    $ne['to']              = $e['to'] ?? null;   // the customer this echo went to
+                    $ne['phone_number_id'] = $pid;
+                    $echoes[] = $ne;
+                }
+
+                // Coexistence: onboarding history + state sync + number status updates.
+                if (in_array($field, ['history', 'smb_app_state_sync', 'account_update'], true)) {
+                    $events[] = ['field' => $field, 'phone_number_id' => $pid];
+                }
             }
         }
 
-        return ['messages' => $messages, 'statuses' => $statuses];
+        return ['messages' => $messages, 'statuses' => $statuses, 'echoes' => $echoes, 'events' => $events];
     }
 
     /**

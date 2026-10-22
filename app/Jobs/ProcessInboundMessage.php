@@ -90,6 +90,68 @@ class ProcessInboundMessage
                 $this->logOutbound($contact->id, $reply, $wamid);
             }
         }
+
+        // Coexistence: staff replied from the WhatsApp Business app -> hand the
+        // chat to a human so the bot stays quiet, and log their message.
+        foreach ($parsed['echoes'] ?? [] as $echo) {
+            $this->handleEcho($echo);
+        }
+
+        // Coexistence sync/status events — surfaced for visibility (history import TBD).
+        foreach ($parsed['events'] ?? [] as $event) {
+            Log::info('WhatsApp coexistence event', $event);
+        }
+    }
+
+    /**
+     * An outbound message the business sent from the WhatsApp app. Log it to the
+     * inbox and flip the conversation to human so the bot doesn't talk over staff.
+     */
+    private function handleEcho(array $echo): void
+    {
+        $to    = $echo['to'] ?? null;
+        $wamid = $echo['wamid'] ?? null;
+        if (! $to || ! $wamid) {
+            return;
+        }
+
+        // Guard: our own Cloud API send echoed back is not a human handoff.
+        $existing = Message::where('wa_message_id', $wamid)->first();
+        if ($existing && $existing->sender === 'bot') {
+            return;
+        }
+
+        // Find/create the customer contact on this business number — WITHOUT
+        // bumping last_inbound_at (an echo is outbound, it doesn't open the 24h window).
+        $contact = Contact::firstOrCreate(
+            ['channel' => Channel::WhatsApp->value, 'external_id' => $to],
+            ['wa_id' => $to, 'wa_phone_number_id' => $echo['phone_number_id'] ?? null],
+        );
+        if (($echo['phone_number_id'] ?? null) && $contact->wa_phone_number_id !== $echo['phone_number_id']) {
+            $contact->update(['wa_phone_number_id' => $echo['phone_number_id']]);
+        }
+
+        if (! $existing) {
+            Message::create([
+                'contact_id'    => $contact->id,
+                'direction'     => Message::DIR_OUT,
+                'type'          => ($echo['type'] ?? 'text') === 'text' ? 'text' : ($echo['type'] ?? 'text'),
+                'body'          => $echo['body'],
+                'wa_message_id' => $wamid,
+                'sender'        => 'App WhatsApp',   // a human replied from the WhatsApp app
+                'payload'       => $echo['raw'] ?? null,
+                'created_at'    => now(),
+            ]);
+        }
+
+        $conversation = $contact->conversation()->firstOrCreate(
+            ['contact_id' => $contact->id],
+            ['state' => Conversation::STATE_IDLE],
+        );
+        if ($conversation->state !== Conversation::STATE_HUMAN) {
+            $conversation->update(['state' => Conversation::STATE_HUMAN]);
+            Log::info('Coexistence handoff: conversation set to human', ['contact' => $contact->id]);
+        }
     }
 
     private function buildReply(
