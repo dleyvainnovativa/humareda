@@ -3,6 +3,7 @@
 use App\Http\Controllers\Auth\FirebaseLoginController;
 use App\Http\Controllers\ConversationController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\EmbeddedSignupController;
 use App\Http\Controllers\KnowledgeController;
 use App\Http\Controllers\MenuController;
 use App\Http\Controllers\ReservationController;
@@ -59,6 +60,12 @@ Route::middleware('auth')->group(function () {
     Route::put('/menu/items/{item}', [MenuController::class, 'updateItem'])->name('menu.items.update');
     Route::post('/menu/items/{item}/toggle', [MenuController::class, 'toggleItem'])->name('menu.items.toggle');
     Route::delete('/menu/items/{item}', [MenuController::class, 'destroyItem'])->name('menu.items.destroy');
+
+    // WhatsApp numbers — Embedded Signup / Coexistence onboarding (T12-TP Phase 1b)
+    Route::get('/whatsapp', [EmbeddedSignupController::class, 'index'])->name('whatsapp.connect');
+    Route::post('/whatsapp/connect', [EmbeddedSignupController::class, 'complete'])->name('whatsapp.connect.complete');
+    Route::post('/whatsapp/{number}/toggle', [EmbeddedSignupController::class, 'toggle'])->name('whatsapp.numbers.toggle');
+    Route::delete('/whatsapp/{number}', [EmbeddedSignupController::class, 'destroy'])->name('whatsapp.numbers.destroy');
 
     // Settings (T10)
     Route::get('/settings', [SettingsController::class, 'edit'])->name('settings.edit');

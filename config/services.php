@@ -50,8 +50,10 @@ return [
 
     // Shared across the Meta Business Messaging products (one app hosts all three).
     'meta' => [
+        'app_id'        => env('META_APP_ID'),
         'app_secret'    => env('META_APP_SECRET', env('WHATSAPP_APP_SECRET')),
         'graph_version' => env('META_GRAPH_VERSION', env('WHATSAPP_GRAPH_VERSION', 'v21.0')),
+        'es_config_id'  => env('META_ES_CONFIG_ID'),   // Embedded Signup config id (coexistence) — Tech Provider
     ],
 
     // Facebook Messenger (Page DM) — T12 Phase B.

@@ -4,6 +4,7 @@
     ['route' => 'conversations.index', 'label' => 'Conversaciones', 'icon' => 'fa-comments'],
     ['route' => 'knowledge.index',     'label' => 'Conocimiento',   'icon' => 'fa-book-open'],
     ['route' => 'menu.index',          'label' => 'Menú',           'icon' => 'fa-utensils'],
+    ['route' => 'whatsapp.connect',    'label' => 'WhatsApp',       'icon' => 'fa-whatsapp', 'style' => 'fa-brands'],
     ['route' => 'settings.edit',       'label' => 'Ajustes',        'icon' => 'fa-sliders'],
 ])
 
@@ -17,7 +18,7 @@
         @foreach ($nav as $item)
             <a href="{{ route($item['route']) }}"
                class="{{ request()->routeIs(\Illuminate\Support\Str::before($item['route'], '.').'*') || request()->routeIs($item['route']) ? 'active' : '' }}">
-                <i class="fa-solid {{ $item['icon'] }}"></i> {{ $item['label'] }}
+                <i class="{{ $item['style'] ?? 'fa-solid' }} {{ $item['icon'] }}"></i> {{ $item['label'] }}
             </a>
         @endforeach
     </nav>
