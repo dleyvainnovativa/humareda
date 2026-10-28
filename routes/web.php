@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::get('/', fn () => redirect()->route('dashboard'));
+Route::get('/legal', fn () => view('privacidad'));
 
 Route::middleware('guest')->group(function () {
     Route::get('/login', [FirebaseLoginController::class, 'show'])->name('login');
