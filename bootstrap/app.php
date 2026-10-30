@@ -36,5 +36,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->command('reminders:dispatch')->everyMinute()->withoutOverlapping();
         // T9 will register the reminders command here, e.g.:
         // $schedule->command('reminders:dispatch')->everyMinute()->withoutOverlapping();
+
+        // Mobile app FCM fan-out (additive): notify staff devices of new inbound
+        // messages / pending reservations without touching the inbound pipeline.
+        $schedule->command('push:scan')->everyMinute()->withoutOverlapping();
     })
     ->create();

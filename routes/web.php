@@ -5,6 +5,7 @@ use App\Http\Controllers\ConversationController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\KnowledgeController;
 use App\Http\Controllers\MenuController;
+use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\ReservationController;
 use App\Http\Controllers\SettingsController;
 use Illuminate\Support\Facades\Route;
@@ -26,6 +27,9 @@ Route::post('/logout', [FirebaseLoginController::class, 'logout'])->name('logout
 
 Route::middleware('auth')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
+
+    // Notification bell (additive, read-only JSON poll) — navbar badge/toast/sound.
+    Route::get('/notifications/summary', [NotificationController::class, 'summary'])->name('notifications.summary');
 
     // Reservations (staff) — T11 adds approve/reject for the pending queue
     Route::get('/reservations', [ReservationController::class, 'index'])->name('reservations.index');
