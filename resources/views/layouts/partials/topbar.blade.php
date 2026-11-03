@@ -69,22 +69,23 @@
 
 @push('scripts')
 {{-- Notification bell: pure client-side polling of /notifications/summary.
-     Per-browser "seen" watermarks in localStorage; soft WebAudio beep + toast
-     on a new inbound message / pending reservation / conversation needing a human. --}}
+     Per-browser "seen" watermarks (last message/reservation id) in localStorage.
+     Badge = unread new conversations + new reservations since last opened;
+     soft WebAudio beep + toast the moment a new one arrives. --}}
 <script>
 (function () {
     var root = document.getElementById('hp-notif');
     if (!root || !window.HP) return;
 
-    var URL      = @json(route('notifications.summary'));
+    var BASE_URL = @json(route('notifications.summary'));
     var POLL_MS  = 20000;
     var badgeEl  = document.getElementById('hp-notif-badge');
     var listEl   = document.getElementById('hp-notif-list');
     var clearBtn = document.getElementById('hp-notif-clear');
     var btnEl    = document.getElementById('hp-notif-btn');
 
-    var ACK_KEY  = 'hp-notif-ack';
-    var prevSig  = null;     // last poll signature (in-memory) — gates the beep
+    var ACK_KEY  = 'hp-notif-seen';   // { m: maxMessageId, r: maxReservationId }
+    var prevMaxM = null, prevMaxR = null;   // in-memory, gates the beep
     var firstRun = true;
     var audioCtx = null;
 
@@ -99,6 +100,10 @@
         var d = document.createElement('div');
         d.textContent = (s == null ? '' : String(s));
         return d.innerHTML;
+    }
+    function urlWith(ack) {
+        var q = '?after_message=' + (ack.m || 0) + '&after_reservation=' + (ack.r || 0);
+        return BASE_URL + q;
     }
 
     function beep() {
@@ -120,29 +125,9 @@
         } catch (e) {}
     }
 
-    function signatureOf(s) {
-        return [s.inbound.max_id, s.reservations.max_id, s.attention.token].join('|');
-    }
-    function hasNew(s, ack) {
-        return s.inbound.max_id      > (ack.inbound || 0)
-            || s.reservations.max_id > (ack.res || 0)
-            || (s.attention.count > 0 && s.attention.token !== ack.attn);
-    }
-    function currentAck(s) {
-        return { inbound: s.inbound.max_id, res: s.reservations.max_id, attn: s.attention.token };
-    }
-
-    function renderBadge(s, isNew) {
-        var standing = (s.reservations.pending || 0) + (s.attention.count || 0);
-        if (standing > 0) {
-            badgeEl.textContent = standing > 99 ? '99+' : standing;
-            badgeEl.classList.remove('d-none');
-            badgeEl.classList.toggle('bg-danger', true);
-        } else if (isNew) {
-            badgeEl.textContent = '';
-            badgeEl.style.minWidth = '.55rem';
-            badgeEl.style.height = '.55rem';
-            badgeEl.style.padding = '0';
+    function renderBadge(unread) {
+        if (unread > 0) {
+            badgeEl.textContent = unread > 99 ? '99+' : unread;
             badgeEl.classList.remove('d-none');
         } else {
             badgeEl.classList.add('d-none');
@@ -155,47 +140,75 @@
             return;
         }
         listEl.innerHTML = recent.map(function (it) {
-            return '<a href="' + esc(it.url) + '" class="dropdown-item d-flex align-items-start gap-2 py-2 border-bottom">'
-                 +   '<i class="fa-solid ' + esc(it.icon) + ' mt-1 text-secondary"></i>'
-                 +   '<span class="flex-grow-1" style="white-space:normal;min-width:0;">'
+            return '<a href="' + esc(it.url) + '" class="dropdown-item d-flex align-items-center gap-2 py-2 border-bottom">'
+                 +   '<i class="fa-solid ' + esc(it.icon) + ' text-secondary flex-shrink-0"></i>'
+                 +   '<span class="flex-grow-1" style="min-width:0;">'
                  +     '<span class="d-block fw-semibold text-truncate">' + esc(it.title) + '</span>'
                  +     '<span class="d-block small text-secondary text-truncate">' + esc(it.subtitle) + '</span>'
                  +   '</span>'
                  +   '<span class="small text-muted flex-shrink-0">' + esc(it.at_label) + '</span>'
+                 +   '<i class="fa-solid fa-chevron-right text-secondary flex-shrink-0" title="Abrir conversación"></i>'
                  + '</a>';
         }).join('');
     }
 
-    function apply(data) {
-        var s = data.signals;
-        var ack = readAck();
-        var isNew = hasNew(s, ack);
-        var sig = signatureOf(s);
+    function newestOfKind(recent, kind) {
+        for (var i = 0; i < (recent || []).length; i++) {
+            if (recent[i].kind === kind) return recent[i];
+        }
+        return null;
+    }
 
-        renderBadge(s, isNew);
+    function apply(data) {
+        var unread = (data.new_messages || 0) + (data.new_reservations || 0);
+        renderBadge(unread);
         renderList(data.recent);
 
-        // Beep + toast only when the signature actually changes (not every poll),
-        // and never on the very first poll of the page.
-        if (!firstRun && sig !== prevSig && isNew) {
-            beep();
-            window.HP.toast('Nueva actividad en el panel', 'info', 4000);
+        if (firstRun) {
+            // First ever load: set the "seen" baseline so unread counts from now.
+            // A returning browser keeps its stored baseline (badge shows what it
+            // missed). No beep for history either way.
+            var ack = readAck();
+            if (ack.m == null && ack.r == null) {
+                writeAck({ m: data.max_message_id, r: data.max_reservation_id });
+            }
+            prevMaxM = data.max_message_id;
+            prevMaxR = data.max_reservation_id;
+            firstRun = false;
+            return;
         }
-        prevSig = sig;
-        firstRun = false;
+
+        // A genuinely new event this interval → beep + a specific toast.
+        var newRes = data.max_reservation_id > prevMaxR;
+        var newMsg = data.max_message_id > prevMaxM;
+        if (newRes || newMsg) {
+            beep();
+            var msg = 'Nueva actividad';
+            if (newRes) {
+                var r = newestOfKind(data.recent, 'reservation');
+                msg = r ? ('Nueva reservación: ' + r.title) : 'Nueva reservación';
+            } else {
+                var m = newestOfKind(data.recent, 'message');
+                msg = m ? ('Nuevo mensaje de ' + m.title) : 'Nuevo mensaje';
+            }
+            window.HP.toast(msg, 'info', 4500);
+        }
+        prevMaxM = data.max_message_id;
+        prevMaxR = data.max_reservation_id;
     }
 
     function poll() {
-        window.HP.http.get(URL).then(apply).catch(function () { /* silent */ });
+        window.HP.http.get(urlWith(readAck())).then(apply).catch(function () { /* silent */ });
     }
 
-    // Opening the bell, or "Marcar leídas", acknowledges current state.
+    // Opening the bell, or "Marcar leídas", marks everything seen up to now.
     function acknowledge() {
-        window.HP.http.get(URL).then(function (data) {
-            writeAck(currentAck(data.signals));
-            renderBadge(data.signals, false);
+        window.HP.http.get(BASE_URL).then(function (data) {
+            writeAck({ m: data.max_message_id, r: data.max_reservation_id });
+            prevMaxM = data.max_message_id;
+            prevMaxR = data.max_reservation_id;
+            renderBadge(0);
             renderList(data.recent);
-            prevSig = signatureOf(data.signals);
         }).catch(function () {});
     }
 

@@ -6,55 +6,65 @@ use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\Reservation;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 
 /**
  * Panel notification bell (additive, read-only).
  *
- * The navbar bell polls `GET /notifications/summary` every ~20s. This endpoint
- * does PURE DB READS — no schema changes, no writes. The browser keeps the
- * "last seen" watermarks in localStorage and decides when something is new, so
- * the server stays stateless and each staff member gets their own unread state.
+ * The navbar bell polls `GET /notifications/summary` every ~20s, passing the
+ * highest message/reservation id it has already seen. This endpoint does PURE
+ * DB READS — no schema changes, no writes — and returns how many NEW items have
+ * appeared since then, so the browser can show a persistent unread badge and
+ * alert (toast + sound) when a new conversation starts or a reservation is made.
  *
- * Signals surfaced:
- *   - inbound      : a new inbound WhatsApp/Messenger/IG message arrived
- *   - reservations : a new reservation is pending authorization
- *   - attention    : a conversation is in the `human` state (needs a person)
+ * Signals:
+ *   - new_messages     : conversations with new inbound activity since last seen
+ *   - new_reservations : reservations created since last seen
+ *   - attention        : conversations currently in the `human` state
  *
  * This controller never touches the inbound/webhook/bot pipeline.
  */
 class NotificationController extends Controller
 {
-    public function summary(): JsonResponse
+    public function summary(Request $request): JsonResponse
     {
-        // --- Monotonic watermarks the client diffs against ------------------
-        $maxInboundId    = (int) Message::where('direction', Message::DIR_IN)->max('id');
-        $inbound24h      = (int) Message::where('direction', Message::DIR_IN)
-            ->where('created_at', '>=', now()->subDay())
-            ->count();
+        $afterMessage     = (int) $request->query('after_message', 0);
+        $afterReservation = (int) $request->query('after_reservation', 0);
 
-        $pendingQuery    = Reservation::pending()->upcoming();
-        $pendingCount    = (int) (clone $pendingQuery)->count();
-        $maxPendingId    = (int) (clone $pendingQuery)->max('id');
+        $maxMessageId     = (int) Message::where('direction', Message::DIR_IN)->max('id');
+        $maxReservationId = (int) Reservation::max('id');
 
-        $humanConvs      = Conversation::where('state', Conversation::STATE_HUMAN);
-        $attentionCount  = (int) (clone $humanConvs)->count();
-        $attentionMaxAt  = (clone $humanConvs)->max('state_changed_at');
-        $attentionToken  = $attentionCount . ':' . ($attentionMaxAt ? Carbon::parse($attentionMaxAt)->timestamp : 0);
+        // Count NEW items only once the client has a baseline (after_* > 0). On
+        // the very first load (0) we report nothing new and the browser just
+        // stores the current max as its baseline — no alert for history.
+        $newMessages = $afterMessage > 0
+            ? (int) Message::where('direction', Message::DIR_IN)
+                ->where('id', '>', $afterMessage)
+                ->distinct()
+                ->count('contact_id')
+            : 0;
+
+        $newReservations = $afterReservation > 0
+            ? (int) Reservation::where('id', '>', $afterReservation)->count()
+            : 0;
+
+        $attentionCount = (int) Conversation::where('state', Conversation::STATE_HUMAN)->count();
 
         return response()->json([
-            'ts'      => now()->timestamp,
-            'signals' => [
-                'inbound'      => ['max_id' => $maxInboundId, 'count_24h' => $inbound24h],
-                'reservations' => ['pending' => $pendingCount, 'max_id' => $maxPendingId],
-                'attention'    => ['count' => $attentionCount, 'token' => $attentionToken],
-            ],
-            'recent'  => $this->recent(),
+            'ts'                 => now()->timestamp,
+            'max_message_id'     => $maxMessageId,
+            'max_reservation_id' => $maxReservationId,
+            'new_messages'       => $newMessages,
+            'new_reservations'   => $newReservations,
+            'attention'          => $attentionCount,
+            'recent'             => $this->recent(),
         ]);
     }
 
     /**
-     * A short, mixed feed for the dropdown body. Read-only, capped small.
+     * A short, mixed feed for the dropdown body — each entry links straight to
+     * the conversation. Read-only, capped small.
      *
      * @return array<int, array<string, mixed>>
      */
@@ -62,7 +72,7 @@ class NotificationController extends Controller
     {
         $items = [];
 
-        // Latest inbound message per recent contact (deduped to newest 6).
+        // Latest inbound messages (newest 6 contacts).
         $messages = Message::where('direction', Message::DIR_IN)
             ->with('contact:id,name,external_id,wa_id,channel')
             ->orderByDesc('id')
@@ -72,37 +82,38 @@ class NotificationController extends Controller
         foreach ($messages as $m) {
             $name = $m->contact?->name ?: ($m->contact?->external_id ?? $m->contact?->wa_id ?? 'Cliente');
             $items[] = [
-                'kind'     => 'message',
-                'icon'     => 'fa-comment-dots',
-                'title'    => $name,
-                'subtitle' => $this->preview($m),
-                'at'       => $m->created_at?->timestamp,
-                'at_label' => $this->timeLabel($m->created_at),
-                'url'      => $m->contact ? route('conversations.show', $m->contact_id) : route('conversations.index'),
+                'kind'       => 'message',
+                'icon'       => 'fa-comment-dots',
+                'title'      => $name,
+                'subtitle'   => $this->preview($m),
+                'at'         => $m->created_at?->timestamp,
+                'at_label'   => $this->timeLabel($m->created_at),
+                'contact_id' => $m->contact_id,
+                'url'        => $m->contact_id ? route('conversations.show', $m->contact_id) : route('conversations.index'),
             ];
         }
 
-        // Pending reservations awaiting authorization.
-        $pending = Reservation::pending()->upcoming()
-            ->with('contact:id,name,external_id,wa_id')
+        // Recent reservations (any status) — each links to its guest's chat.
+        $reservations = Reservation::with('contact:id,name,external_id,wa_id')
             ->orderByDesc('id')
             ->limit(6)
             ->get();
 
-        foreach ($pending as $r) {
+        foreach ($reservations as $r) {
             $items[] = [
-                'kind'     => 'reservation',
-                'icon'     => 'fa-calendar-plus',
-                'title'    => $r->name ?: ($r->contact?->name ?? 'Reservacion'),
-                'subtitle' => $this->reservationLine($r),
-                'at'       => $r->created_at?->timestamp,
-                'at_label' => $this->timeLabel($r->created_at),
-                'url'      => route('reservations.index', ['status' => 'pending']),
+                'kind'       => 'reservation',
+                'icon'       => $r->status === Reservation::STATUS_PENDING ? 'fa-calendar-plus' : 'fa-calendar-check',
+                'title'      => $r->name ?: ($r->contact?->name ?? 'Reservación'),
+                'subtitle'   => $this->reservationLine($r),
+                'at'         => $r->created_at?->timestamp,
+                'at_label'   => $this->timeLabel($r->created_at),
+                'contact_id' => $r->contact_id,
+                'url'        => $r->contact_id ? route('conversations.show', $r->contact_id) : route('reservations.index'),
             ];
         }
 
         // Newest first; cap the combined feed.
-        usort($items, fn ($a, $b) => ($b['at'] ?? 0) <=> ($a['at'] ?? 0));
+        usort($items, fn($a, $b) => ($b['at'] ?? 0) <=> ($a['at'] ?? 0));
 
         return array_slice($items, 0, 8);
     }
@@ -120,10 +131,11 @@ class NotificationController extends Controller
 
     private function reservationLine(Reservation $r): string
     {
-        $date = $r->reserved_date?->translatedFormat('d M');
-        $time = substr((string) $r->reserved_time, 0, 5);
+        $date  = $r->reserved_date?->translatedFormat('d M');
+        $time  = substr((string) $r->reserved_time, 0, 5);
+        $label = $r->status === Reservation::STATUS_PENDING ? 'Por autorizar · ' : '';
 
-        return trim("{$r->party_size}p · {$date} {$time}");
+        return trim("{$label}{$r->party_size}p · {$date} {$time}");
     }
 
     private function timeLabel(?Carbon $at): string
