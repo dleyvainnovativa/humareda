@@ -16,7 +16,7 @@ use Illuminate\Validation\Rule;
  */
 class KnowledgeController extends Controller
 {
-    private const CATEGORIES = ['menu', 'hours', 'location', 'dietary', 'policy', 'general'];
+    private const CATEGORIES = ['menu', 'hours', 'location', 'dietary', 'policy', 'general', 'billing'];
 
     public function index(): View
     {

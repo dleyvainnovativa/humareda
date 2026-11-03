@@ -29,8 +29,32 @@ class Replies
     public static function greeting(string $lang): string
     {
         return $lang === 'en'
-            ? "Hi! Welcome to Humareda Prime 🔥 I can help you request a table. What day, time and how many people?"
-            : "¡Hola! Bienvenido a Humareda Prime 🔥 Con gusto te ayudo con tu solicitud de reservación. ¿Para qué día, hora y cuántas personas?";
+            ? "Hi! Great to hear from you 🔥 Happy to help with your reservation at Humareda Prime. What day, time and how many people?"
+            : "¡Hola! Qué gusto saludarte 🔥 Con gusto te apoyo con tu reservación en Humareda Prime. ¿Para qué día, hora y cuántas personas?";
+    }
+
+    /** Warm acknowledgement for a thank-you / closing (no reservation re-pitch). */
+    public static function acknowledge(string $lang): string
+    {
+        return $lang === 'en'
+            ? "You're welcome! I'm here for anything — a reservation, the menu or your invoice. 🔥"
+            : "¡Con gusto! Cualquier cosa —reservación, menú o tu factura— aquí estoy. 🔥";
+    }
+
+    /** Handing off because the bot can't answer a valid question. */
+    public static function handoffQuestion(string $lang): string
+    {
+        return $lang === 'en'
+            ? "Great question! I'll connect you with our team to get you the exact details — someone will reply here shortly."
+            : "¡Buena pregunta! Te paso con alguien del equipo para darte el dato exacto. En un momento te responden por aquí.";
+    }
+
+    /** Acknowledging a special seating / occasion request and handing off. */
+    public static function specialRequest(string $lang): string
+    {
+        return $lang === 'en'
+            ? "Of course! For special requests (a sea-view table, a special occasion, etc.) I'll connect you with our team to arrange it. Someone will reply here shortly. 🌊"
+            : "¡Con gusto! Para peticiones especiales (mesa con vista al mar, alguna ocasión especial, etc.) te paso con alguien del equipo que te ayuda a arreglarlo. En un momento te responden por aquí. 🌊";
     }
 
     /** First booking prompt: present the full set of fields the client listed. */
@@ -42,25 +66,39 @@ class Replies
     }
 
     public static function askName(string $lang): string
-    { return $lang === 'en' ? "What's the full name for the reservation?" : "¿A nombre de quién? (nombre completo)"; }
+    {
+        return $lang === 'en' ? "What's the full name for the reservation?" : "¿A nombre de quién? (nombre completo)";
+    }
 
     public static function askParty(string $lang): string
-    { return $lang === 'en' ? "How many people?" : "¿Para cuántas personas?"; }
+    {
+        return $lang === 'en' ? "How many people?" : "¿Para cuántas personas?";
+    }
 
     public static function askTime(string $lang): string
-    { return $lang === 'en' ? "What time?" : "¿A qué hora?"; }
+    {
+        return $lang === 'en' ? "What time?" : "¿A qué hora?";
+    }
 
     public static function askDate(string $lang): string
-    { return $lang === 'en' ? "What day?" : "¿Para qué día?"; }
+    {
+        return $lang === 'en' ? "What day?" : "¿Para qué día?";
+    }
 
     public static function askReference(string $lang): string
-    { return $lang === 'en' ? "And an email or phone as a reference?" : "¿Un correo o teléfono de referencia?"; }
+    {
+        return $lang === 'en' ? "And an email or phone as a reference?" : "¿Un correo o teléfono de referencia?";
+    }
 
     public static function pastDate(string $lang): string
-    { return $lang === 'en' ? "That date has already passed — what day would you like?" : "Esa fecha ya pasó — ¿para qué día te gustaría?"; }
+    {
+        return $lang === 'en' ? "That date has already passed — what day would you like?" : "Esa fecha ya pasó — ¿para qué día te gustaría?";
+    }
 
     public static function invalidParty(string $lang): string
-    { return $lang === 'en' ? "How many people? (a number, please)" : "¿Para cuántas personas? (un número, por favor)"; }
+    {
+        return $lang === 'en' ? "How many people? (a number, please)" : "¿Para cuántas personas? (un número, por favor)";
+    }
 
     /** Data-check summary before submitting the request. */
     public static function confirmSummary(array $s, string $lang): string
@@ -154,7 +192,9 @@ class Replies
     }
 
     public static function cancelKept(string $lang): string
-    { return $lang === 'en' ? "No problem — I've left it as it is." : "Sin problema — la dejo tal cual."; }
+    {
+        return $lang === 'en' ? "No problem — I've left it as it is." : "Sin problema — la dejo tal cual.";
+    }
 
     public static function askWhatToChange(array $s, string $lang): string
     {
@@ -173,10 +213,26 @@ class Replies
     }
 
     public static function handoff(string $lang): string
-    { return $lang === 'en' ? "Of course — I'll connect you with our team. Someone will reply here shortly." : "Claro, te conecto con nuestro equipo. En un momento te responden por aquí."; }
+    {
+        return $lang === 'en' ? "Of course — I'll connect you with our team. Someone will reply here shortly." : "Claro, te conecto con nuestro equipo. En un momento te responden por aquí.";
+    }
+
+    /**
+     * Facturación (CFDI) default. Lists exactly what the guest must send and
+     * sets expectations. Used when there is no editable `billing` knowledge
+     * entry. Keep the field list aligned with CFDI 4.0.
+     */
+    public static function invoiceInfo(string $lang): string
+    {
+        return $lang === 'en'
+            ? "We'll gladly help with your invoice (CFDI) 🧾.\n\nTo issue it, send us in a SINGLE message:\n• Legal name (razón social, exact)\n• RFC (tax ID)\n• Tax regime (régimen fiscal)\n• CFDI use (uso de CFDI)\n• Tax ZIP code\n• Email to send the invoice\n• Ticket details: folio, date and total\n\nBilling hours: 10:00–18:00. We can only invoice purchases from the current month. Someone from billing will assist you here shortly."
+            : "Con gusto te ayudamos con tu factura (CFDI) 🧾.\n\nPara generarla, envíanos en UN SOLO mensaje:\n• Razón social (nombre o denominación exacta)\n• RFC\n• Régimen fiscal\n• Uso de CFDI\n• Código postal fiscal\n• Correo para enviar la factura\n• Datos del ticket: folio, fecha y monto total\n\nHorario de facturación: de 10:00 a 18:00 h. Solo podemos facturar consumos del mes en curso. En un momento una persona del área de facturación te atiende por aquí.";
+    }
 
     public static function faqFallback(string $lang): string
-    { return $lang === 'en' ? "Good question — let me check with the team and get back to you here." : "Buena pregunta — déjame confirmarlo con el equipo y te aviso por aquí."; }
+    {
+        return $lang === 'en' ? "Good question — let me check with the team and get back to you here." : "Buena pregunta — déjame confirmarlo con el equipo y te aviso por aquí.";
+    }
 
     public static function pleaseType(string $lang, bool $audio = false): string
     {
@@ -187,8 +243,14 @@ class Replies
     }
 
     public static function selectionUnclear(string $lang): string
-    { return $lang === 'en' ? "Which one? You can reply with the number." : "¿Cuál de ellas? Puedes responder con el número."; }
+    {
+        return $lang === 'en' ? "Which one? You can reply with the number." : "¿Cuál de ellas? Puedes responder con el número.";
+    }
 
     public static function fallback(string $lang): string
-    { return $lang === 'en' ? "I can help you request, change or cancel a table. What would you like to do?" : "Puedo ayudarte a solicitar, cambiar o cancelar una mesa. ¿Qué te gustaría hacer?"; }
+    {
+        return $lang === 'en'
+            ? "Happy to help 🙂 I can take your reservation, share the menu, hours or location, or help with your invoice. What do you need? I can also connect you with our team."
+            : "Con gusto te ayudo 🙂 Puedo tomar tu reservación, darte info del menú, horario o ubicación, o ayudarte con tu factura. ¿Qué necesitas? Si prefieres, te paso con alguien del equipo.";
+    }
 }

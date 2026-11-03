@@ -5,6 +5,7 @@ namespace App\Services\Bot;
 use App\Events\ConversationHandedOff;
 use App\Models\Contact;
 use App\Models\Conversation;
+use App\Models\KnowledgeEntry;
 use App\Models\Reservation;
 use App\Services\AI\TurnInterpreter;
 use App\Services\Reservations\CancellationService;
@@ -39,8 +40,32 @@ class ConversationEngine
         $slots = SlotFiller::merge(SlotFiller::empty(), $ctx['slots'] ?? []);
         $lang  = $contact->locale ?: 'es';
 
+        // Invoice / facturación requests short-circuit the booking flow: reply
+        // with what to send and hand off to the billing team (deterministic,
+        // runs before the LLM so it can't fall into the reservation fallback).
+        if (Affirmation::wantsInvoice($text)) {
+            return $this->goInvoice($contact, $conversation, $ctx, $lang);
+        }
+
         if (Affirmation::wantsHuman($text)) {
             return $this->goHuman($contact, $conversation, $ctx, $lang);
+        }
+
+        // Special seating/occasion requests (sea view, terrace, birthday…) that a
+        // person must arrange: only interrupt when idle, so an in-progress booking
+        // isn't abandoned. Acknowledge + hand off instead of ignoring them.
+        if ($conversation->state === Conversation::STATE_IDLE && Affirmation::wantsSpecialRequest($text)) {
+            return $this->goSpecial($contact, $conversation, $ctx, $lang);
+        }
+
+        // A thank-you / closing while idle gets a warm acknowledgement rather than
+        // the full reservation greeting again.
+        if (
+            $conversation->state === Conversation::STATE_IDLE
+            && ! array_filter($slots)
+            && Affirmation::isClosing($text)
+        ) {
+            return Replies::acknowledge($lang);
         }
 
         $interp = $this->interpreter->interpret($text, $history, $slots);
@@ -54,6 +79,10 @@ class ConversationEngine
             return $this->goHuman($contact, $conversation, $ctx, $lang);
         }
 
+        if ($interp['intent'] === 'request_invoice') {
+            return $this->goInvoice($contact, $conversation, $ctx, $lang);
+        }
+
         switch ($conversation->state) {
             case Conversation::STATE_CONFIRMING:
                 return $this->handleConfirming($contact, $conversation, $slots, $interp, $text, $lang);
@@ -65,7 +94,7 @@ class ConversationEngine
 
         switch ($interp['intent']) {
             case 'faq':
-                return $this->handleFaq($conversation, $slots, $interp, $lang);
+                return $this->handleFaq($contact, $conversation, $ctx, $slots, $interp, $lang);
             case 'check_reservation':
                 return $this->handleCheck($contact, $conversation, $lang);
             case 'cancel_reservation':
@@ -170,7 +199,10 @@ class ConversationEngine
         }
         if (count($summaries) === 1) {
             $this->persist($conversation, Conversation::STATE_CANCELLING, [
-                'flow' => 'cancel', 'stage' => 'confirm', 'target_id' => $summaries[0]['id'], 'candidates' => $summaries,
+                'flow' => 'cancel',
+                'stage' => 'confirm',
+                'target_id' => $summaries[0]['id'],
+                'candidates' => $summaries,
             ]);
             return Replies::confirmCancel($summaries[0], $lang);
         }
@@ -222,8 +254,11 @@ class ConversationEngine
         if (count($summaries) === 1) {
             $s = $summaries[0];
             $this->persist($conversation, Conversation::STATE_MODIFYING, [
-                'flow' => 'modify', 'stage' => 'collect', 'target_id' => $s['id'],
-                'candidates' => $summaries, 'mod_slots' => $this->slotsFromReservation($s['id']),
+                'flow' => 'modify',
+                'stage' => 'collect',
+                'target_id' => $s['id'],
+                'candidates' => $summaries,
+                'mod_slots' => $this->slotsFromReservation($s['id']),
             ]);
             return Replies::askWhatToChange($s, $lang);
         }
@@ -294,23 +329,60 @@ class ConversationEngine
 
     // ------------------------------------------------------------- faq/human
 
-    private function handleFaq(Conversation $conversation, array $slots, array $interp, string $lang): string
+    private function handleFaq(Contact $contact, Conversation $conversation, array $ctx, array $slots, array $interp, string $lang): string
     {
-        $reply = $interp['faq_answer'] ?: Replies::faqFallback($lang);
+        // The bot doesn't know → hand to a person so the guest actually gets an
+        // answer, instead of a "déjame confirmarlo y te aviso" that never comes.
+        if (empty($interp['faq_answer'])) {
+            return $this->goHuman($contact, $conversation, $ctx, $lang, 'uncovered', Replies::handoffQuestion($lang));
+        }
+
+        $reply = $interp['faq_answer'];
         if ($conversation->state === Conversation::STATE_BOOKING && ($miss = SlotFiller::missing($slots))) {
             $reply .= "\n\n" . SlotFiller::promptFor($miss, $lang);
         }
         return $reply;
     }
 
-    private function goHuman(Contact $contact, Conversation $conversation, array $ctx, string $lang): string
+    private function goHuman(Contact $contact, Conversation $conversation, array $ctx, string $lang, string $reason = 'guest_request', ?string $reply = null): string
     {
         $wasHuman = $conversation->state === Conversation::STATE_HUMAN;
         $this->persist($conversation, Conversation::STATE_HUMAN, $ctx);
         if (! $wasHuman) {
-            event(new ConversationHandedOff($conversation->id, $contact->id, 'guest_request', $contact->wa_id, $contact->name));
+            event(new ConversationHandedOff($conversation->id, $contact->id, $reason, $contact->wa_id, $contact->name));
         }
-        return Replies::handoff($lang);
+        return $reply ?? Replies::handoff($lang);
+    }
+
+    /** Sea-view / special-occasion request: acknowledge and hand to a person. */
+    private function goSpecial(Contact $contact, Conversation $conversation, array $ctx, string $lang): string
+    {
+        return $this->goHuman($contact, $conversation, $ctx, $lang, 'special_request', Replies::specialRequest($lang));
+    }
+
+    /**
+     * Facturación path: send the CFDI data the guest must provide and hand the
+     * conversation to the billing team (state=human + handoff event). Copy is
+     * taken from an active `billing` knowledge entry if one exists (so staff can
+     * edit the wording in the panel), falling back to a correct default.
+     */
+    private function goInvoice(Contact $contact, Conversation $conversation, array $ctx, string $lang): string
+    {
+        $wasHuman = $conversation->state === Conversation::STATE_HUMAN;
+        $this->persist($conversation, Conversation::STATE_HUMAN, $ctx);
+        if (! $wasHuman) {
+            event(new ConversationHandedOff($conversation->id, $contact->id, 'billing', $contact->wa_id, $contact->name));
+        }
+
+        $entry = KnowledgeEntry::active()->where('category', 'billing')->orderBy('sort_order')->first();
+        if ($entry) {
+            $copy = $lang === 'en' ? ($entry->answer_en ?: $entry->answer_es) : $entry->answer_es;
+            if (is_string($copy) && trim($copy) !== '') {
+                return trim($copy);
+            }
+        }
+
+        return Replies::invoiceInfo($lang);
     }
 
     // --------------------------------------------------------------- helpers

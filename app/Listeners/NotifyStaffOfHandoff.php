@@ -26,15 +26,17 @@ class NotifyStaffOfHandoff
         }
 
         $reason = match ($event->reason) {
-            'big_party' => 'grupo grande',
-            'uncovered' => 'consulta fuera de cobertura',
-            default     => 'el cliente pidió hablar con una persona',
+            'big_party'       => 'grupo grande',
+            'uncovered'       => 'consulta fuera de cobertura',
+            'billing'         => 'solicitud de factura',
+            'special_request' => 'petición especial (mesa / ocasión)',
+            default           => 'el cliente pidió hablar con una persona',
         };
 
         $who  = $event->contactName ? "{$event->contactName} ({$event->waId})" : $event->waId;
         $url  = rtrim((string) config('app.url'), '/') . "/conversations/{$event->contactId}";
         $body = "Una conversación de WhatsApp necesita atención.\n\n"
-              . "Cliente: {$who}\nMotivo: {$reason}\n\nAbrir en el panel: {$url}\n";
+            . "Cliente: {$who}\nMotivo: {$reason}\n\nAbrir en el panel: {$url}\n";
 
         try {
             Mail::raw($body, function ($m) use ($to) {

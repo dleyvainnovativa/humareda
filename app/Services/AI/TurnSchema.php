@@ -15,6 +15,7 @@ class TurnSchema
         'cancel_reservation',
         'modify_reservation',
         'check_reservation',
+        'request_invoice',
         'faq',
         'talk_to_human',
         'greeting',
